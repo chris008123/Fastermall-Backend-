@@ -1,0 +1,327 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// ─────────────────────────────────────────────
+// Identity
+// ─────────────────────────────────────────────
+
+enum UserRole {
+  CUSTOMER
+  VENDOR
+  DELIVERY_PARTNER
+  LAUNDRY_STAFF
+  ADMIN
+}
+
+enum DeliveryPartnerType {
+  WALKING
+  MOTORCYCLE
+}
+
+model User {
+  id           String   @id @default(uuid())
+  email        String?  @unique
+  phone        String?  @unique
+  passwordHash String
+  fullName     String
+  role         UserRole @default(CUSTOMER)
+  isVerified   Boolean  @default(false)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  orders          Order[]
+  laundryOrders   LaundryOrder[]
+  deliveryProfile DeliveryPartnerProfile?
+  notifications   Notification[]
+  supportTickets  SupportTicket[]
+
+  @@map("users")
+}
+
+model DeliveryPartnerProfile {
+  id            String              @id @default(uuid())
+  userId        String              @unique
+  user          User                @relation(fields: [userId], references: [id])
+  type          DeliveryPartnerType
+  isAvailable   Boolean             @default(false)
+  currentLat    Float?
+  currentLng    Float?
+  vehiclePlate  String?
+  deliveries    Delivery[]
+  earnings      DriverEarning[]
+  createdAt     DateTime            @default(now())
+
+  @@map("delivery_partner_profiles")
+}
+
+// ─────────────────────────────────────────────
+// Marketplace
+// ─────────────────────────────────────────────
+
+model Category {
+  id       String    @id @default(uuid())
+  name     String
+  products Product[]
+
+  @@map("categories")
+}
+
+model Product {
+  id          String       @id @default(uuid())
+  name        String
+  description String?
+  price       Decimal      @db.Decimal(10, 2)
+  stock       Int          @default(0)
+  categoryId  String?
+  category    Category?    @relation(fields: [categoryId], references: [id])
+  orderItems  OrderItem[]
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  @@map("products")
+}
+
+// ─────────────────────────────────────────────
+// Food
+// ─────────────────────────────────────────────
+
+model FoodVendor {
+  id        String     @id @default(uuid())
+  name      String
+  location  String?
+  isActive  Boolean    @default(true)
+  menuItems MenuItem[]
+
+  @@map("food_vendors")
+}
+
+model MenuItem {
+  id          String      @id @default(uuid())
+  vendorId    String
+  vendor      FoodVendor  @relation(fields: [vendorId], references: [id])
+  name        String
+  price       Decimal     @db.Decimal(10, 2)
+  isAvailable Boolean     @default(true)
+  orderItems  OrderItem[]
+
+  @@map("menu_items")
+}
+
+// ─────────────────────────────────────────────
+// Orders (Marketplace + Food; Laundry has its own model)
+// ─────────────────────────────────────────────
+
+enum OrderType {
+  MARKETPLACE
+  FOOD
+}
+
+enum OrderStatus {
+  PENDING
+  CONFIRMED
+  PREPARING
+  OUT_FOR_DELIVERY
+  DELIVERED
+  CANCELLED
+  REFUNDED
+}
+
+model Order {
+  id          String      @id @default(uuid())
+  customerId  String
+  customer    User        @relation(fields: [customerId], references: [id])
+  type        OrderType
+  status      OrderStatus @default(PENDING)
+  totalAmount Decimal     @db.Decimal(10, 2)
+  items       OrderItem[]
+  payment     Payment?
+  delivery    Delivery?
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  @@map("orders")
+}
+
+model OrderItem {
+  id         String    @id @default(uuid())
+  orderId    String
+  order      Order     @relation(fields: [orderId], references: [id])
+  productId  String?
+  product    Product?  @relation(fields: [productId], references: [id])
+  menuItemId String?
+  menuItem   MenuItem? @relation(fields: [menuItemId], references: [id])
+  quantity   Int
+  unitPrice  Decimal   @db.Decimal(10, 2)
+
+  @@map("order_items")
+}
+
+// ─────────────────────────────────────────────
+// Laundry
+// ─────────────────────────────────────────────
+
+enum LaundryStatus {
+  PICKUP_REQUESTED
+  RECEIVED
+  INSPECTED
+  TAGGED
+  WASHING
+  DRYING
+  IRONING
+  FOLDING
+  QUALITY_CHECK
+  PACKAGED
+  READY_FOR_DELIVERY
+  OUT_FOR_DELIVERY
+  COMPLETED
+}
+
+model LaundryOrder {
+  id             String        @id @default(uuid())
+  customerId     String
+  customer       User          @relation(fields: [customerId], references: [id])
+  status         LaundryStatus @default(PICKUP_REQUESTED)
+  servicePackage String
+  instructions   String?
+  pickupAt       DateTime?
+  deliverAt      DateTime?
+  totalAmount    Decimal       @db.Decimal(10, 2)
+  items          LaundryItem[]
+  payment        Payment?
+  delivery       Delivery?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  @@map("laundry_orders")
+}
+
+model LaundryItem {
+  id             String       @id @default(uuid())
+  laundryOrderId String
+  laundryOrder   LaundryOrder @relation(fields: [laundryOrderId], references: [id])
+  description    String
+  tagCode        String?
+
+  @@map("laundry_items")
+}
+
+// ─────────────────────────────────────────────
+// Logistics
+// ─────────────────────────────────────────────
+
+enum DeliveryStatus {
+  ASSIGNED
+  EN_ROUTE_TO_PICKUP
+  PICKED_UP
+  EN_ROUTE_TO_CUSTOMER
+  DELIVERED
+  FAILED
+}
+
+model Delivery {
+  id               String                  @id @default(uuid())
+  orderId          String?                 @unique
+  order            Order?                  @relation(fields: [orderId], references: [id])
+  laundryOrderId   String?                 @unique
+  laundryOrder     LaundryOrder?           @relation(fields: [laundryOrderId], references: [id])
+  partnerId        String?
+  partner          DeliveryPartnerProfile? @relation(fields: [partnerId], references: [id])
+  status           DeliveryStatus          @default(ASSIGNED)
+  pickupLat        Float?
+  pickupLng        Float?
+  dropoffLat       Float?
+  dropoffLng       Float?
+  distanceKm       Float?
+  createdAt        DateTime                @default(now())
+  updatedAt        DateTime                @updatedAt
+
+  @@map("deliveries")
+}
+
+model DriverEarning {
+  id        String                  @id @default(uuid())
+  partnerId String
+  partner   DeliveryPartnerProfile  @relation(fields: [partnerId], references: [id])
+  amount    Decimal                 @db.Decimal(10, 2)
+  note      String?
+  createdAt DateTime                @default(now())
+
+  @@map("driver_earnings")
+}
+
+// ─────────────────────────────────────────────
+// Payments
+// ─────────────────────────────────────────────
+
+enum PaymentStatus {
+  PENDING
+  SUCCESSFUL
+  FAILED
+  REFUNDED
+}
+
+enum PaymentMethod {
+  MOBILE_MONEY
+  CARD
+  CASH
+}
+
+model Payment {
+  id             String        @id @default(uuid())
+  orderId        String?       @unique
+  order          Order?        @relation(fields: [orderId], references: [id])
+  laundryOrderId String?       @unique
+  laundryOrder   LaundryOrder? @relation(fields: [laundryOrderId], references: [id])
+  amount         Decimal       @db.Decimal(10, 2)
+  method         PaymentMethod
+  status         PaymentStatus @default(PENDING)
+  providerRef    String?
+  createdAt      DateTime      @default(now())
+
+  @@map("payments")
+}
+
+// ─────────────────────────────────────────────
+// Notifications
+// ─────────────────────────────────────────────
+
+model Notification {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  title     String
+  body      String
+  isRead    Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@map("notifications")
+}
+
+enum TicketStatus {
+  OPEN
+  IN_PROGRESS
+  RESOLVED
+  CLOSED
+}
+
+model SupportTicket {
+  id        String       @id @default(uuid())
+  userId    String
+  user      User         @relation(fields: [userId], references: [id])
+  subject   String
+  message   String
+  status    TicketStatus @default(OPEN)
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+
+  @@map("support_tickets")
+}
+
+

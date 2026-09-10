@@ -1,14 +1,20 @@
-import { Controller, Get, UseGuards } from '@nestjs/common';
+import { Controller, Get, Patch, Param, UseGuards } from '@nestjs/common';
 import { NotificationsService } from './notifications.service';
 import { JwtAuthGuard } from '../../shared/guards/jwt-auth.guard';
+import { CurrentUser } from '../../shared/decorators/current-user.decorator';
 
+@UseGuards(JwtAuthGuard)
 @Controller('notifications')
 export class NotificationsController {
   constructor(private readonly notificationsService: NotificationsService) {}
 
-  @UseGuards(JwtAuthGuard)
   @Get()
-  findAll() {
-    return this.notificationsService.findAll();
+  findMine(@CurrentUser() user: { userId: string }) {
+    return this.notificationsService.findMine(user.userId);
+  }
+
+  @Patch(':id/read')
+  markRead(@Param('id') id: string) {
+    return this.notificationsService.markRead(id);
   }
 }

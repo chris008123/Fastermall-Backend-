@@ -1,15 +1,27 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../database/prisma.service';
+import { CreateTicketDto } from './dto/create-ticket.dto';
+import { UpdateTicketStatusDto } from './dto/update-ticket-status.dto';
 
-// TODO: implement Support business logic here.
-// Keep this service the single place that owns Support rules —
-// controllers stay thin, repositories/prisma calls happen here.
 @Injectable()
 export class SupportService {
   constructor(private readonly prisma: PrismaService) {}
 
+  create(userId: string, dto: CreateTicketDto) {
+    return this.prisma.supportTicket.create({ data: { userId, ...dto } });
+  }
+
+  findMine(userId: string) {
+    return this.prisma.supportTicket.findMany({ where: { userId }, orderBy: { createdAt: 'desc' } });
+  }
+
   findAll() {
-    // TODO: replace with real query once Support models are finalized
-    return { message: 'Support module scaffolded — implement findAll()' };
+    return this.prisma.supportTicket.findMany({ orderBy: { createdAt: 'desc' } });
+  }
+
+  async updateStatus(id: string, dto: UpdateTicketStatusDto) {
+    const ticket = await this.prisma.supportTicket.findUnique({ where: { id } });
+    if (!ticket) throw new NotFoundException('Ticket not found');
+    return this.prisma.supportTicket.update({ where: { id }, data: { status: dto.status } });
   }
 }

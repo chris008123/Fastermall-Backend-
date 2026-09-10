@@ -9,4 +9,7 @@ export default () => ({
     anonKey: process.env.SUPABASE_ANON_KEY,
     serviceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY,
   },
+  // Used once to create your very first admin via POST /staff/bootstrap-admin.
+  // Set this to a long random string in your .env / Render environment variables.
+  adminBootstrapSecret: process.env.ADMIN_BOOTSTRAP_SECRET,
 });

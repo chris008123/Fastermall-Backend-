@@ -5,6 +5,9 @@ import { PrismaService } from '../../database/prisma.service';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 
+// This module is for the CUSTOMER-facing app only. Vendors, delivery
+// partners, laundry staff, and admins authenticate through the Staff
+// module instead — see src/modules/staff.
 @Injectable()
 export class IdentityService {
   constructor(
@@ -26,7 +29,6 @@ export class IdentityService {
         phone: dto.phone,
         fullName: dto.fullName,
         passwordHash,
-        role: dto.role ?? 'CUSTOMER',
       },
     });
 
@@ -54,11 +56,14 @@ export class IdentityService {
     return safeUser;
   }
 
-  private buildAuthResponse(user: { id: string; email: string | null; role: string; fullName: string }) {
-    const accessToken = this.jwt.sign({ sub: user.id, email: user.email, role: user.role });
+  private buildAuthResponse(user: { id: string; email: string | null; fullName: string }) {
+    // role is hardcoded, not stored — customers are always CUSTOMER.
+    // This keeps RolesGuard working unchanged: any @Roles(StaffRole.X) check
+    // simply never matches 'CUSTOMER', so customers can't reach staff routes.
+    const accessToken = this.jwt.sign({ sub: user.id, email: user.email, role: 'CUSTOMER' });
     return {
       accessToken,
-      user: { id: user.id, email: user.email, fullName: user.fullName, role: user.role },
+      user: { id: user.id, email: user.email, fullName: user.fullName, role: 'CUSTOMER' },
     };
   }
 }
