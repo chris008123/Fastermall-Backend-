@@ -3,25 +3,27 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
   directUrl = env("DIRECT_URL")
 }
 
 model User {
-  id           String   @id @default(uuid())
-  email        String?  @unique
-  phone        String?  @unique
+  id           String    @id @default(uuid())
+  email        String?   @unique
+  phone        String?   @unique
   passwordHash String
   fullName     String
-  isVerified   Boolean  @default(false)
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  isVerified   Boolean   @default(false)
+  otpCodeHash  String?
+  otpExpiresAt DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
 
-  orders          Order[]
-  laundryOrders   LaundryOrder[]
-  notifications   Notification[]
-  supportTickets  SupportTicket[]
+  orders         Order[]
+  laundryOrders  LaundryOrder[]
+  notifications  Notification[]
+  supportTickets SupportTicket[]
 
   @@map("users")
 }
@@ -55,17 +57,17 @@ model StaffUser {
 }
 
 model DeliveryPartnerProfile {
-  id            String              @id @default(uuid())
-  staffUserId   String              @unique
-  staffUser     StaffUser           @relation(fields: [staffUserId], references: [id])
-  type          DeliveryPartnerType
-  isAvailable   Boolean             @default(false)
-  currentLat    Float?
-  currentLng    Float?
-  vehiclePlate  String?
-  deliveries    Delivery[]
-  earnings      DriverEarning[]
-  createdAt     DateTime            @default(now())
+  id           String              @id @default(uuid())
+  staffUserId  String              @unique
+  staffUser    StaffUser           @relation(fields: [staffUserId], references: [id])
+  type         DeliveryPartnerType
+  isAvailable  Boolean             @default(false)
+  currentLat   Float?
+  currentLng   Float?
+  vehiclePlate String?
+  deliveries   Delivery[]
+  earnings     DriverEarning[]
+  createdAt    DateTime            @default(now())
 
   @@map("delivery_partner_profiles")
 }
@@ -219,10 +221,10 @@ model Delivery {
   orderId        String?                 @unique
   order          Order?                  @relation(fields: [orderId], references: [id])
   laundryOrderId String?                 @unique
-  laundryOrder  LaundryOrder?            @relation(fields: [laundryOrderId], references: [id])
+  laundryOrder   LaundryOrder?           @relation(fields: [laundryOrderId], references: [id])
   partnerId      String?
   partner        DeliveryPartnerProfile? @relation(fields: [partnerId], references: [id])
-  status         DeliveryStatus           @default(ASSIGNED)
+  status         DeliveryStatus          @default(ASSIGNED)
   pickupLat      Float?
   pickupLng      Float?
   dropoffLat     Float?
