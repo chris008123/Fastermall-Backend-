@@ -28,8 +28,18 @@ export class MarketplaceController {
   }
 
   @Get('products')
-  findAllProducts(@Query('categoryId') categoryId?: string) {
-    return this.marketplaceService.findAllProducts(categoryId);
+  findAllProducts(
+    @Query('query') query?: string,
+    @Query('categoryId') categoryId?: string,
+    @Query('page') page?: string,
+    @Query('pageSize') pageSize?: string,
+  ) {
+    return this.marketplaceService.findAllProducts({
+      query,
+      categoryId,
+      page: page ? Number(page) : undefined,
+      pageSize: pageSize ? Number(pageSize) : undefined,
+    });
   }
 
   @Get('products/:id')
@@ -54,7 +64,10 @@ export class MarketplaceController {
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(StaffRole.ADMIN)
   @Patch('products/:id')
-  updateProduct(@Param('id') id: string, @Body() dto: UpdateProductDto) {
+  updateProduct(
+    @Param('id') id: string,
+    @Body() dto: UpdateProductDto,
+  ) {
     return this.marketplaceService.updateProduct(id, dto);
   }
 

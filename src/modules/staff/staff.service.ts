@@ -95,17 +95,43 @@ export class StaffService {
   }
 
   async getProfile(staffUserId: string) {
-    const staffUser = await this.prisma.staffUser.findUnique({ where: { id: staffUserId } });
-    if (!staffUser) throw new UnauthorizedException();
+    const staffUser = await this.prisma.staffUser.findUnique({
+      where: { id: staffUserId },
+      include: {
+        deliveryProfile: true,
+      },
+    });
+
+    if (!staffUser) {
+      throw new UnauthorizedException();
+    }
+
     const { passwordHash, ...safe } = staffUser;
+
     return safe;
   }
 
-  private buildAuthResponse(staffUser: { id: string; email: string | null; fullName: string; role: string }) {
-    const accessToken = this.jwt.sign({ sub: staffUser.id, email: staffUser.email, role: staffUser.role });
+    private buildAuthResponse(staffUser: {
+    id: string;
+    email: string | null;
+    fullName: string;
+    role: string;
+  }) {
+    const accessToken = this.jwt.sign({
+      sub: staffUser.id,
+      email: staffUser.email,
+      role: staffUser.role,
+    });
+
     return {
       accessToken,
-      user: { id: staffUser.id, email: staffUser.email, fullName: staffUser.fullName, role: staffUser.role },
+      user: {
+        id: staffUser.id,
+        email: staffUser.email,
+        fullName: staffUser.fullName,
+        role: staffUser.role,
+      },
     };
   }
+
 }

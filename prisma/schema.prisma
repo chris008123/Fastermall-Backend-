@@ -75,43 +75,85 @@ model DeliveryPartnerProfile {
 model Category {
   id       String    @id @default(uuid())
   name     String
+  icon     String?
   products Product[]
 
   @@map("categories")
 }
 
+model MarketplaceVendor {
+  id       String    @id @default(uuid())
+  name     String
+  location String?
+  isActive Boolean   @default(true)
+  products Product[]
+
+  @@map("marketplace_vendors")
+}
+
 model Product {
-  id          String      @id @default(uuid())
+  id          String  @id @default(uuid())
   name        String
   description String?
-  price       Decimal     @db.Decimal(10, 2)
-  stock       Int         @default(0)
-  categoryId  String?
-  category    Category?   @relation(fields: [categoryId], references: [id])
-  orderItems  OrderItem[]
-  createdAt   DateTime    @default(now())
-  updatedAt   DateTime    @updatedAt
+  price       Decimal @db.Decimal(10, 2)
+  stock       Int     @default(0)
+  imageUrl    String?
+  unit        String?
+
+  categoryId String?
+  category   Category? @relation(fields: [categoryId], references: [id])
+
+  vendorId String?
+  vendor   MarketplaceVendor? @relation(fields: [vendorId], references: [id])
+
+  orderItems OrderItem[]
+  createdAt  DateTime    @default(now())
+  updatedAt  DateTime    @updatedAt
 
   @@map("products")
 }
 
-model FoodVendor {
-  id        String     @id @default(uuid())
+model FoodCategory {
+  id        String   @id @default(uuid())
   name      String
-  location  String?
-  isActive  Boolean    @default(true)
-  menuItems MenuItem[]
+  icon      String?
+  service   String   @default("food")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("food_categories")
+}
+
+model FoodVendor {
+  id              String     @id @default(uuid())
+  name            String
+  description     String?
+  imageUrl        String?
+  categoryIds     String[]
+  rating          Float      @default(0)
+  reviewCount     Int        @default(0)
+  deliveryTimeMin Int        @default(30)
+  deliveryFee     Decimal    @db.Decimal(10, 2) @default(0)
+  minOrder        Decimal    @db.Decimal(10, 2) @default(0)
+  isOpen          Boolean    @default(true)
+  location        String?
+  isActive        Boolean    @default(true)
+  menuItems       MenuItem[]
 
   @@map("food_vendors")
 }
 
 model MenuItem {
-  id          String      @id @default(uuid())
+  id          String     @id @default(uuid())
   vendorId    String
-  vendor      FoodVendor  @relation(fields: [vendorId], references: [id])
+  vendor      FoodVendor @relation(fields: [vendorId], references: [id])
   name        String
-  price       Decimal     @db.Decimal(10, 2)
-  isAvailable Boolean     @default(true)
+  description String?
+  imageUrl    String?
+  category    String?
+  price       Decimal    @db.Decimal(10, 2)
+  rating      Float      @default(0)
+  isAvailable Boolean    @default(true)
   orderItems  OrderItem[]
 
   @@map("menu_items")
@@ -133,17 +175,26 @@ enum OrderStatus {
 }
 
 model Order {
-  id          String      @id @default(uuid())
-  customerId  String
-  customer    User        @relation(fields: [customerId], references: [id])
-  type        OrderType
-  status      OrderStatus @default(PENDING)
-  totalAmount Decimal     @db.Decimal(10, 2)
-  items       OrderItem[]
-  payment     Payment?
-  delivery    Delivery?
-  createdAt   DateTime    @default(now())
-  updatedAt   DateTime    @updatedAt
+  id             String      @id @default(uuid())
+  customerId     String
+  customer       User        @relation(fields: [customerId], references: [id])
+  type           OrderType
+  status         OrderStatus @default(PENDING)
+
+  totalAmount    Decimal     @db.Decimal(10, 2)
+  deliveryFee    Decimal     @db.Decimal(10, 2) @default(0)
+
+  vendorName     String?
+  addressLabel   String?
+  paymentMethod  String?
+  notes          String?
+
+  items          OrderItem[]
+  payment        Payment?
+  delivery       Delivery?
+
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
 
   @@map("orders")
 }

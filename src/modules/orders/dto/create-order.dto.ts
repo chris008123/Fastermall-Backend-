@@ -1,4 +1,12 @@
-import { IsArray, IsEnum, IsNumber, IsOptional, IsString, Min, ValidateNested } from 'class-validator';
+import {
+  IsArray,
+  IsEnum,
+  IsNumber,
+  IsOptional,
+  IsString,
+  Min,
+  ValidateNested,
+} from 'class-validator';
 import { Type } from 'class-transformer';
 import { OrderType } from '@prisma/client';
 
@@ -24,4 +32,25 @@ export class CreateOrderDto {
   @ValidateNested({ each: true })
   @Type(() => OrderItemInput)
   items: OrderItemInput[];
+
+  @IsOptional()
+  @IsString()
+  vendorName?: string;
+
+  @IsOptional()
+  @IsString()
+  addressLabel?: string;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  deliveryFee?: number;
+
+  @IsOptional()
+  @IsString()
+  paymentMethod?: string;
+
+  @IsOptional()
+  @IsString()
+  notes?: string;
 }
