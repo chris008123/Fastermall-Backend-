@@ -136,7 +136,10 @@ export class OrdersService {
       },
     });
 
-    if (dto.type === OrderType.FOOD) {
+    if (
+      dto.type === OrderType.FOOD ||
+      dto.type === OrderType.MARKETPLACE
+    ) {
       await this.prisma.delivery.create({
         data: {
           orderId: order.id,
@@ -144,6 +147,20 @@ export class OrdersService {
         },
       });
     }
+
+    const orderWithDelivery = await this.prisma.order.findUnique({
+      where: { id: order.id },
+      include: {
+        items: {
+          include: {
+            product: true,
+            menuItem: true,
+          },
+        },
+        payment: true,
+        delivery: true,
+      },
+    });
 
     if (dto.type === OrderType.MARKETPLACE) {
       for (const item of lineItems) {
@@ -155,9 +172,9 @@ export class OrdersService {
         }
       }
     }
-    this.events.emit('order.created', order);
+    this.events.emit('order.created', orderWithDelivery);
 
-    return order;
+    return orderWithDelivery;
   }
 
   findMyOrders(customerId: string) {
