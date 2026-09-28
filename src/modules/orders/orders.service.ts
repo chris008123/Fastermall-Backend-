@@ -10,6 +10,7 @@ import { MarketplaceService } from '../marketplace/marketplace.service';
 import { FoodService } from '../food/food.service';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { UpdateOrderStatusDto } from './dto/update-order-status.dto';
+import * as bcrypt from 'bcrypt';
 
 @Injectable()
 export class OrdersService {
@@ -140,10 +141,20 @@ export class OrdersService {
       dto.type === OrderType.FOOD ||
       dto.type === OrderType.MARKETPLACE
     ) {
+      const deliveryCode = Math.floor(
+        100000 + Math.random() * 900000,
+      ).toString();
+
+      const deliveryCodeHash = await bcrypt.hash(
+        deliveryCode,
+        10,
+      );
+
       await this.prisma.delivery.create({
         data: {
           orderId: order.id,
           status: 'ASSIGNED',
+          deliveryCodeHash,
         },
       });
     }

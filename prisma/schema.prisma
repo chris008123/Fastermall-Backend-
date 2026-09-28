@@ -268,21 +268,29 @@ enum DeliveryStatus {
 }
 
 model Delivery {
-  id             String                  @id @default(uuid())
-  orderId        String?                 @unique
-  order          Order?                  @relation(fields: [orderId], references: [id])
-  laundryOrderId String?                 @unique
-  laundryOrder   LaundryOrder?           @relation(fields: [laundryOrderId], references: [id])
-  partnerId      String?
-  partner        DeliveryPartnerProfile? @relation(fields: [partnerId], references: [id])
-  status         DeliveryStatus          @default(ASSIGNED)
-  pickupLat      Float?
-  pickupLng      Float?
-  dropoffLat     Float?
-  dropoffLng     Float?
-  distanceKm     Float?
-  createdAt      DateTime                @default(now())
-  updatedAt      DateTime                @updatedAt
+  id                    String                  @id @default(uuid())
+  orderId               String?                 @unique
+  order                 Order?                  @relation(fields: [orderId], references: [id])
+  laundryOrderId        String?                 @unique
+  laundryOrder          LaundryOrder?           @relation(fields: [laundryOrderId], references: [id])
+  partnerId             String?
+  partner               DeliveryPartnerProfile? @relation(fields: [partnerId], references: [id])
+  status                DeliveryStatus           @default(ASSIGNED)
+
+  deliveryCodeHash      String?
+  deliveryCodeUsed      Boolean                 @default(false)
+  deliveryCodeAttempts  Int                     @default(0)
+  deliveryCodeLockedUntil DateTime?
+  verifiedAt            DateTime?
+
+  pickupLat             Float?
+  pickupLng             Float?
+  dropoffLat            Float?
+  dropoffLng            Float?
+  distanceKm            Float?
+
+  createdAt             DateTime                @default(now())
+  updatedAt             DateTime                @updatedAt
 
   @@map("deliveries")
 }
