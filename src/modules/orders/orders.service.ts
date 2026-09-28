@@ -11,6 +11,10 @@ import { FoodService } from '../food/food.service';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { UpdateOrderStatusDto } from './dto/update-order-status.dto';
 import * as bcrypt from 'bcrypt';
+import {
+  encryptDeliveryCode,
+  decryptDeliveryCode,
+} from '../../shared/utils/delivery-code-encryption';
 
 @Injectable()
 export class OrdersService {
@@ -133,7 +137,22 @@ export class OrdersService {
           },
         },
         payment: true,
-        delivery: true,
+        delivery: {
+          select: {
+            id: true,
+            orderId: true,
+            laundryOrderId: true,
+            partnerId: true,
+            status: true,
+            pickupLat: true,
+            pickupLng: true,
+            dropoffLat: true,
+            dropoffLng: true,
+            distanceKm: true,
+            createdAt: true,
+            updatedAt: true,
+          },
+        },
       },
     });
 
@@ -150,11 +169,15 @@ export class OrdersService {
         10,
       );
 
+      const deliveryCodeEncrypted =
+        encryptDeliveryCode(deliveryCode);
+
       await this.prisma.delivery.create({
         data: {
           orderId: order.id,
           status: 'ASSIGNED',
           deliveryCodeHash,
+          deliveryCodeEncrypted,
         },
       });
     }
@@ -169,7 +192,22 @@ export class OrdersService {
           },
         },
         payment: true,
-        delivery: true,
+        delivery: {
+          select: {
+            id: true,
+            orderId: true,
+            laundryOrderId: true,
+            partnerId: true,
+            status: true,
+            pickupLat: true,
+            pickupLng: true,
+            dropoffLat: true,
+            dropoffLng: true,
+            distanceKm: true,
+            createdAt: true,
+            updatedAt: true,
+          },
+        },
       },
     });
 
@@ -205,9 +243,12 @@ export class OrdersService {
     });
   }
 
-  async findOne(id: string) {
-    const order = await this.prisma.order.findUnique({
-      where: { id },
+  async findOne(id: string, customerId: string) {
+    const order = await this.prisma.order.findFirst({
+      where: {
+        id,
+        customerId,
+      },
       include: {
         items: {
           include: {
@@ -224,11 +265,43 @@ export class OrdersService {
       throw new NotFoundException('Order not found');
     }
 
+    let delivery = order.delivery;
+
+    if (delivery?.deliveryCodeEncrypted) {
+      const code = decryptDeliveryCode(
+        delivery.deliveryCodeEncrypted,
+      );
+
+      delivery = {
+        ...delivery,
+        code,
+      } as typeof delivery & { code: string };
+    }
+
+    if (delivery) {
+      const {
+        deliveryCodeHash,
+        deliveryCodeEncrypted,
+        ...safeDelivery
+      } = delivery;
+
+      return {
+        ...order,
+        delivery: safeDelivery,
+      };
+    }
+
     return order;
   }
 
   async updateStatus(id: string, dto: UpdateOrderStatusDto) {
-    await this.findOne(id);
+    const existingOrder = await this.prisma.order.findUnique({
+      where: { id },
+    });
+
+    if (!existingOrder) {
+      throw new NotFoundException('Order not found');
+    }
 
     const updated = await this.prisma.order.update({
       where: { id },

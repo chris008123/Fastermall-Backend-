@@ -24,10 +24,13 @@ export class OrdersController {
   }
 
   @Get(':id')
-  findOne(@Param('id') id: string) {
-    return this.ordersService.findOne(id);
+  findOne(
+    @CurrentUser() user: { userId: string },
+    @Param('id') id: string,
+  ) {
+    return this.ordersService.findOne(id, user.userId);
   }
-
+  
   @UseGuards(RolesGuard)
   @Roles(StaffRole.ADMIN)
   @Patch(':id/status')

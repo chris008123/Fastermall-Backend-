@@ -277,11 +277,12 @@ model Delivery {
   partner               DeliveryPartnerProfile? @relation(fields: [partnerId], references: [id])
   status                DeliveryStatus           @default(ASSIGNED)
 
-  deliveryCodeHash      String?
-  deliveryCodeUsed      Boolean                 @default(false)
-  deliveryCodeAttempts  Int                     @default(0)
+  deliveryCodeHash       String?
+  deliveryCodeEncrypted  String?
+  deliveryCodeUsed       Boolean   @default(false)
+  deliveryCodeAttempts   Int      @default(0)
   deliveryCodeLockedUntil DateTime?
-  verifiedAt            DateTime?
+  verifiedAt             DateTime?
 
   pickupLat             Float?
   pickupLng             Float?
