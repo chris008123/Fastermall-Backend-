@@ -4,14 +4,13 @@ import {
   IsInt,
   IsOptional,
   IsString,
-  IsUUID,
   Min,
   ValidateNested,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 
 class LaundryOrderItemDto {
-  @IsUUID()
+  @IsString()
   catalogItemId: string;
 
   @IsInt()
