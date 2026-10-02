@@ -19,6 +19,7 @@ import { Roles } from '../../shared/decorators/roles.decorator';
 import { CurrentUser } from '../../shared/decorators/current-user.decorator';
 
 import { StaffRole } from '@prisma/client';
+import { VerifyDeliveryCodeDto } from './dto/verify-delivery-code.dto';
 
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(StaffRole.DELIVERY_PARTNER, StaffRole.ADMIN)
@@ -46,6 +47,19 @@ export class LogisticsController {
   ) {
     return this.logisticsService.claim(
       id,
+      user.userId,
+    );
+  }
+
+  @Post('deliveries/:id/verify-code')
+  verifyDeliveryCode(
+    @Param('id') id: string,
+    @Body() dto: VerifyDeliveryCodeDto,
+    @CurrentUser() user: { userId: string },
+  ) {
+    return this.logisticsService.verifyDeliveryCode(
+      id,
+      dto.code,
       user.userId,
     );
   }

@@ -9,48 +9,34 @@ datasource db {
 }
 
 model User {
-  id           String    @id @default(uuid())
-  email        String?   @unique
-  phone        String?   @unique
-  passwordHash String
-  fullName     String
-  isVerified   Boolean   @default(false)
-  otpCodeHash  String?
-  otpExpiresAt DateTime?
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
-
-  orders         Order[]
+  id             String          @id @default(uuid())
+  email          String?         @unique
+  phone          String?         @unique
+  passwordHash   String
+  fullName       String
+  isVerified     Boolean         @default(false)
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+  otpCodeHash    String?
+  otpExpiresAt   DateTime?
   laundryOrders  LaundryOrder[]
   notifications  Notification[]
+  orders         Order[]
   supportTickets SupportTicket[]
 
   @@map("users")
 }
 
-enum StaffRole {
-  VENDOR
-  DELIVERY_PARTNER
-  LAUNDRY_STAFF
-  ADMIN
-}
-
-enum DeliveryPartnerType {
-  WALKING
-  MOTORCYCLE
-}
-
 model StaffUser {
-  id           String    @id @default(uuid())
-  email        String?   @unique
-  phone        String?   @unique
-  passwordHash String
-  fullName     String
-  role         StaffRole
-  isVerified   Boolean   @default(false)
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
-
+  id              String                  @id @default(uuid())
+  email           String?                 @unique
+  phone           String?                 @unique
+  passwordHash    String
+  fullName        String
+  role            StaffRole
+  isVerified      Boolean                 @default(false)
+  createdAt       DateTime                @default(now())
+  updatedAt       DateTime                @updatedAt
   deliveryProfile DeliveryPartnerProfile?
 
   @@map("staff_users")
@@ -59,15 +45,15 @@ model StaffUser {
 model DeliveryPartnerProfile {
   id           String              @id @default(uuid())
   staffUserId  String              @unique
-  staffUser    StaffUser           @relation(fields: [staffUserId], references: [id])
   type         DeliveryPartnerType
   isAvailable  Boolean             @default(false)
   currentLat   Float?
   currentLng   Float?
   vehiclePlate String?
-  deliveries   Delivery[]
-  earnings     DriverEarning[]
   createdAt    DateTime            @default(now())
+  deliveries   Delivery[]
+  staffUser    StaffUser           @relation(fields: [staffUserId], references: [id])
+  earnings     DriverEarning[]
 
   @@map("delivery_partner_profiles")
 }
@@ -92,23 +78,20 @@ model MarketplaceVendor {
 }
 
 model Product {
-  id          String  @id @default(uuid())
+  id          String             @id @default(uuid())
   name        String
   description String?
-  price       Decimal @db.Decimal(10, 2)
-  stock       Int     @default(0)
+  price       Decimal            @db.Decimal(10, 2)
+  stock       Int                @default(0)
+  categoryId  String?
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
   imageUrl    String?
   unit        String?
-
-  categoryId String?
-  category   Category? @relation(fields: [categoryId], references: [id])
-
-  vendorId String?
-  vendor   MarketplaceVendor? @relation(fields: [vendorId], references: [id])
-
-  orderItems OrderItem[]
-  createdAt  DateTime    @default(now())
-  updatedAt  DateTime    @updatedAt
+  vendorId    String?
+  orderItems  OrderItem[]
+  category    Category?          @relation(fields: [categoryId], references: [id])
+  vendor      MarketplaceVendor? @relation(fields: [vendorId], references: [id])
 
   @@map("products")
 }
@@ -127,36 +110,217 @@ model FoodCategory {
 model FoodVendor {
   id              String     @id @default(uuid())
   name            String
-  description     String?
-  imageUrl        String?
-  categoryIds     String[]
-  rating          Float      @default(0)
-  reviewCount     Int        @default(0)
-  deliveryTimeMin Int        @default(30)
-  deliveryFee     Decimal    @db.Decimal(10, 2) @default(0)
-  minOrder        Decimal    @db.Decimal(10, 2) @default(0)
-  isOpen          Boolean    @default(true)
   location        String?
   isActive        Boolean    @default(true)
+  categoryIds     String[]
+  deliveryFee     Decimal    @default(0) @db.Decimal(10, 2)
+  deliveryTimeMin Int        @default(30)
+  description     String?
+  imageUrl        String?
+  minOrder        Decimal    @default(0) @db.Decimal(10, 2)
+  rating          Float      @default(0)
+  reviewCount     Int        @default(0)
+  isOpen          Boolean    @default(true)
   menuItems       MenuItem[]
 
   @@map("food_vendors")
 }
 
 model MenuItem {
-  id          String     @id @default(uuid())
+  id          String      @id @default(uuid())
   vendorId    String
-  vendor      FoodVendor @relation(fields: [vendorId], references: [id])
   name        String
+  price       Decimal     @db.Decimal(10, 2)
+  isAvailable Boolean     @default(true)
+  category    String?
   description String?
   imageUrl    String?
-  category    String?
-  price       Decimal    @db.Decimal(10, 2)
-  rating      Float      @default(0)
-  isAvailable Boolean    @default(true)
+  rating      Float       @default(0)
+  vendor      FoodVendor  @relation(fields: [vendorId], references: [id])
   orderItems  OrderItem[]
 
   @@map("menu_items")
+}
+
+model Order {
+  id            String      @id @default(uuid())
+  customerId    String
+  type          OrderType
+  status        OrderStatus @default(PENDING)
+  totalAmount   Decimal     @db.Decimal(10, 2)
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+  addressLabel  String?
+  deliveryFee   Decimal     @default(0) @db.Decimal(10, 2)
+  notes         String?
+  paymentMethod String?
+  vendorName    String?
+  delivery      Delivery?
+  items         OrderItem[]
+  customer      User        @relation(fields: [customerId], references: [id])
+  payment       Payment?
+
+  @@map("orders")
+}
+
+model OrderItem {
+  id         String    @id @default(uuid())
+  orderId    String
+  productId  String?
+  menuItemId String?
+  quantity   Int
+  unitPrice  Decimal   @db.Decimal(10, 2)
+  menuItem   MenuItem? @relation(fields: [menuItemId], references: [id])
+  order      Order     @relation(fields: [orderId], references: [id])
+  product    Product?  @relation(fields: [productId], references: [id])
+
+  @@map("order_items")
+}
+
+model LaundryCatalogItem {
+  id          String        @id @default(uuid())
+  name        String
+  description String?
+  unitPrice   Decimal       @db.Decimal(10, 2)
+  isActive    Boolean       @default(true)
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+  items       LaundryItem[]
+
+  @@map("laundry_catalog_items")
+}
+
+model LaundryOrder {
+  id         String @id @default(uuid())
+  customerId String
+  customer   User   @relation(fields: [customerId], references: [id])
+
+  status LaundryStatus @default(PICKUP_REQUESTED)
+
+  instructions String?
+
+  pickupMode String?
+  pickupAt   DateTime?
+  deliverAt  DateTime?
+
+  estimatedKg  Decimal? @db.Decimal(10, 2)
+  laundryTotal Decimal? @db.Decimal(10, 2)
+  deliveryFee  Decimal  @default(0) @db.Decimal(10, 2)
+
+  totalAmount Decimal @db.Decimal(10, 2)
+
+  items    LaundryItem[]
+  payment  Payment?
+  delivery Delivery?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("laundry_orders")
+}
+
+model LaundryItem {
+  id             String              @id @default(uuid())
+  laundryOrderId String
+  description    String
+  tagCode        String?
+  catalogItemId  String?
+  lineTotal      Decimal?            @db.Decimal(10, 2)
+  quantity       Int                 @default(1)
+  unitPrice      Decimal?            @db.Decimal(10, 2)
+  catalogItem    LaundryCatalogItem? @relation(fields: [catalogItemId], references: [id])
+  laundryOrder   LaundryOrder        @relation(fields: [laundryOrderId], references: [id])
+
+  @@map("laundry_items")
+}
+
+model Delivery {
+  id                      String                  @id @default(uuid())
+  orderId                 String?                 @unique
+  laundryOrderId          String?                 @unique
+  partnerId               String?
+  status                  DeliveryStatus          @default(ASSIGNED)
+  pickupLat               Float?
+  pickupLng               Float?
+  dropoffLat              Float?
+  dropoffLng              Float?
+  distanceKm              Float?
+  createdAt               DateTime                @default(now())
+  updatedAt               DateTime                @updatedAt
+  deliveryCodeAttempts    Int                     @default(0)
+  deliveryCodeHash        String?
+  deliveryCodeLockedUntil DateTime?
+  deliveryCodeUsed        Boolean                 @default(false)
+  verifiedAt              DateTime?
+  deliveryCodeEncrypted   String?
+  laundryOrder            LaundryOrder?           @relation(fields: [laundryOrderId], references: [id])
+  order                   Order?                  @relation(fields: [orderId], references: [id])
+  partner                 DeliveryPartnerProfile? @relation(fields: [partnerId], references: [id])
+
+  @@map("deliveries")
+}
+
+model DriverEarning {
+  id        String                 @id @default(uuid())
+  partnerId String
+  amount    Decimal                @db.Decimal(10, 2)
+  note      String?
+  createdAt DateTime               @default(now())
+  partner   DeliveryPartnerProfile @relation(fields: [partnerId], references: [id])
+
+  @@map("driver_earnings")
+}
+
+model Payment {
+  id             String        @id @default(uuid())
+  orderId        String?       @unique
+  laundryOrderId String?       @unique
+  amount         Decimal       @db.Decimal(10, 2)
+  method         PaymentMethod
+  status         PaymentStatus @default(PENDING)
+  providerRef    String?
+  createdAt      DateTime      @default(now())
+  laundryOrder   LaundryOrder? @relation(fields: [laundryOrderId], references: [id])
+  order          Order?        @relation(fields: [orderId], references: [id])
+
+  @@map("payments")
+}
+
+model Notification {
+  id        String   @id @default(uuid())
+  userId    String
+  title     String
+  body      String
+  isRead    Boolean  @default(false)
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id])
+
+  @@map("notifications")
+}
+
+model SupportTicket {
+  id        String       @id @default(uuid())
+  userId    String
+  subject   String
+  message   String
+  status    TicketStatus @default(OPEN)
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+  user      User         @relation(fields: [userId], references: [id])
+
+  @@map("support_tickets")
+}
+
+enum StaffRole {
+  VENDOR
+  DELIVERY_PARTNER
+  LAUNDRY_STAFF
+  ADMIN
+}
+
+enum DeliveryPartnerType {
+  WALKING
+  MOTORCYCLE
 }
 
 enum OrderType {
@@ -172,45 +336,6 @@ enum OrderStatus {
   DELIVERED
   CANCELLED
   REFUNDED
-}
-
-model Order {
-  id             String      @id @default(uuid())
-  customerId     String
-  customer       User        @relation(fields: [customerId], references: [id])
-  type           OrderType
-  status         OrderStatus @default(PENDING)
-
-  totalAmount    Decimal     @db.Decimal(10, 2)
-  deliveryFee    Decimal     @db.Decimal(10, 2) @default(0)
-
-  vendorName     String?
-  addressLabel   String?
-  paymentMethod  String?
-  notes          String?
-
-  items          OrderItem[]
-  payment        Payment?
-  delivery       Delivery?
-
-  createdAt      DateTime    @default(now())
-  updatedAt      DateTime    @updatedAt
-
-  @@map("orders")
-}
-
-model OrderItem {
-  id         String    @id @default(uuid())
-  orderId    String
-  order      Order     @relation(fields: [orderId], references: [id])
-  productId  String?
-  product    Product?  @relation(fields: [productId], references: [id])
-  menuItemId String?
-  menuItem   MenuItem? @relation(fields: [menuItemId], references: [id])
-  quantity   Int
-  unitPrice  Decimal   @db.Decimal(10, 2)
-
-  @@map("order_items")
 }
 
 enum LaundryStatus {
@@ -229,35 +354,6 @@ enum LaundryStatus {
   COMPLETED
 }
 
-model LaundryOrder {
-  id             String        @id @default(uuid())
-  customerId     String
-  customer       User          @relation(fields: [customerId], references: [id])
-  status         LaundryStatus @default(PICKUP_REQUESTED)
-  servicePackage String
-  instructions   String?
-  pickupAt       DateTime?
-  deliverAt      DateTime?
-  totalAmount    Decimal       @db.Decimal(10, 2)
-  items          LaundryItem[]
-  payment        Payment?
-  delivery       Delivery?
-  createdAt      DateTime      @default(now())
-  updatedAt      DateTime      @updatedAt
-
-  @@map("laundry_orders")
-}
-
-model LaundryItem {
-  id             String       @id @default(uuid())
-  laundryOrderId String
-  laundryOrder   LaundryOrder @relation(fields: [laundryOrderId], references: [id])
-  description    String
-  tagCode        String?
-
-  @@map("laundry_items")
-}
-
 enum DeliveryStatus {
   ASSIGNED
   EN_ROUTE_TO_PICKUP
@@ -265,46 +361,6 @@ enum DeliveryStatus {
   EN_ROUTE_TO_CUSTOMER
   DELIVERED
   FAILED
-}
-
-model Delivery {
-  id                    String                  @id @default(uuid())
-  orderId               String?                 @unique
-  order                 Order?                  @relation(fields: [orderId], references: [id])
-  laundryOrderId        String?                 @unique
-  laundryOrder          LaundryOrder?           @relation(fields: [laundryOrderId], references: [id])
-  partnerId             String?
-  partner               DeliveryPartnerProfile? @relation(fields: [partnerId], references: [id])
-  status                DeliveryStatus           @default(ASSIGNED)
-
-  deliveryCodeHash       String?
-  deliveryCodeEncrypted  String?
-  deliveryCodeUsed       Boolean   @default(false)
-  deliveryCodeAttempts   Int      @default(0)
-  deliveryCodeLockedUntil DateTime?
-  verifiedAt             DateTime?
-
-  pickupLat             Float?
-  pickupLng             Float?
-  dropoffLat            Float?
-  dropoffLng            Float?
-  distanceKm            Float?
-
-  createdAt             DateTime                @default(now())
-  updatedAt             DateTime                @updatedAt
-
-  @@map("deliveries")
-}
-
-model DriverEarning {
-  id        String                 @id @default(uuid())
-  partnerId String
-  partner   DeliveryPartnerProfile @relation(fields: [partnerId], references: [id])
-  amount    Decimal                @db.Decimal(10, 2)
-  note      String?
-  createdAt DateTime               @default(now())
-
-  @@map("driver_earnings")
 }
 
 enum PaymentStatus {
@@ -320,49 +376,9 @@ enum PaymentMethod {
   CASH
 }
 
-model Payment {
-  id             String        @id @default(uuid())
-  orderId        String?       @unique
-  order          Order?        @relation(fields: [orderId], references: [id])
-  laundryOrderId String?       @unique
-  laundryOrder   LaundryOrder? @relation(fields: [laundryOrderId], references: [id])
-  amount         Decimal       @db.Decimal(10, 2)
-  method         PaymentMethod
-  status         PaymentStatus @default(PENDING)
-  providerRef    String?
-  createdAt      DateTime      @default(now())
-
-  @@map("payments")
-}
-
-model Notification {
-  id        String   @id @default(uuid())
-  userId    String
-  user      User     @relation(fields: [userId], references: [id])
-  title     String
-  body      String
-  isRead    Boolean  @default(false)
-  createdAt DateTime @default(now())
-
-  @@map("notifications")
-}
-
 enum TicketStatus {
   OPEN
   IN_PROGRESS
   RESOLVED
   CLOSED
-}
-
-model SupportTicket {
-  id        String       @id @default(uuid())
-  userId    String
-  user      User         @relation(fields: [userId], references: [id])
-  subject   String
-  message   String
-  status    TicketStatus @default(OPEN)
-  createdAt DateTime     @default(now())
-  updatedAt DateTime     @updatedAt
-
-  @@map("support_tickets")
 }

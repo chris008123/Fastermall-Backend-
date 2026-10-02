@@ -1,19 +1,47 @@
-import { IsArray, IsDateString, IsOptional, IsString, MinLength } from 'class-validator';
+import {
+  IsArray,
+  IsDateString,
+  IsInt,
+  IsOptional,
+  IsString,
+  IsUUID,
+  Min,
+  ValidateNested,
+} from 'class-validator';
+import { Type } from 'class-transformer';
+
+class LaundryOrderItemDto {
+  @IsUUID()
+  catalogItemId: string;
+
+  @IsInt()
+  @Min(1)
+  quantity: number;
+}
 
 export class CreateLaundryOrderDto {
-  @IsString()
-  servicePackage: string;
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => LaundryOrderItemDto)
+  items: LaundryOrderItemDto[];
 
   @IsOptional()
   @IsString()
   instructions?: string;
 
   @IsOptional()
+  @IsString()
+  pickupMode?: string;
+
+  @IsOptional()
   @IsDateString()
   pickupAt?: string;
 
-  // Simple description strings for each garment, e.g. ["2 shirts", "1 jacket"]
-  @IsArray()
-  @IsString({ each: true })
-  items: string[];
+  @IsOptional()
+  @IsDateString()
+  deliverAt?: string;
+
+  @IsOptional()
+  @IsString()
+  estimatedKg?: string;
 }

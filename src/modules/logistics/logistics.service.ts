@@ -13,7 +13,7 @@ import {
 import { PrismaService } from '../../database/prisma.service';
 import { UpdatePartnerStatusDto } from './dto/update-partner-status.dto';
 import { UpdateDeliveryStatusDto } from './dto/update-delivery-status.dto';
-
+import * as bcrypt from 'bcrypt';
 // Short-distance deliveries go to walking partners, longer ones need a motorcycle.
 // Distance isn't tracked yet at the order level because GPS/maps are not part of
 // the current MVP.
@@ -204,6 +204,143 @@ export class LogisticsService {
     );
   }
 
+  async verifyDeliveryCode(
+    deliveryId: string,
+    code: string,
+    userId: string,
+  ) {
+    const profile =
+      await this.prisma.deliveryPartnerProfile.findUnique({
+        where: {
+          staffUserId: userId,
+        },
+      });
+
+    if (!profile) {
+      throw new NotFoundException(
+        'You are not registered as a delivery partner',
+      );
+    }
+
+    const delivery =
+      await this.prisma.delivery.findUnique({
+        where: {
+          id: deliveryId,
+        },
+      });
+
+    if (!delivery) {
+      throw new NotFoundException(
+        'Delivery not found',
+      );
+    }
+
+    if (delivery.partnerId !== profile.id) {
+      throw new BadRequestException(
+        'You are not assigned to this delivery',
+      );
+    }
+
+    if (delivery.deliveryCodeUsed) {
+      throw new BadRequestException(
+        'This delivery code has already been used',
+      );
+    }
+
+    if (
+      delivery.deliveryCodeLockedUntil &&
+      delivery.deliveryCodeLockedUntil > new Date()
+    ) {
+      throw new BadRequestException(
+        'Delivery code verification is temporarily locked',
+      );
+    }
+
+    if (!delivery.deliveryCodeHash) {
+      throw new BadRequestException(
+        'No delivery verification code exists',
+      );
+    }
+
+    const valid = await bcrypt.compare(
+      code,
+      delivery.deliveryCodeHash,
+    );
+
+    if (!valid) {
+      const attempts =
+        delivery.deliveryCodeAttempts + 1;
+
+      await this.prisma.delivery.update({
+        where: {
+          id: deliveryId,
+        },
+        data: {
+          deliveryCodeAttempts: attempts,
+          deliveryCodeLockedUntil:
+            attempts >= 5
+              ? new Date(Date.now() + 5 * 60 * 1000)
+              : null,
+        },
+      });
+
+      throw new BadRequestException(
+        attempts >= 5
+          ? 'Too many incorrect attempts. Try again in 5 minutes.'
+          : 'Invalid delivery code',
+      );
+    }
+
+    return this.prisma.$transaction(
+      async (tx) => {
+        const updated =
+          await tx.delivery.update({
+            where: {
+              id: deliveryId,
+            },
+            data: {
+              status: DeliveryStatus.DELIVERED,
+              deliveryCodeUsed: true,
+              verifiedAt: new Date(),
+            },
+          });
+
+        if (delivery.orderId) {
+          await tx.order.update({
+            where: {
+              id: delivery.orderId,
+            },
+            data: {
+              status: OrderStatus.DELIVERED,
+            },
+          });
+        }
+
+        if (delivery.partnerId) {
+          const existingEarning =
+            await tx.driverEarning.findFirst({
+              where: {
+                partnerId: delivery.partnerId,
+                note: `Delivery ${deliveryId}`,
+              },
+            });
+
+          if (!existingEarning) {
+            await tx.driverEarning.create({
+              data: {
+                partnerId: delivery.partnerId,
+                amount: 15,
+                note: `Delivery ${deliveryId}`,
+              },
+            });
+          }
+        }
+
+        return updated;
+      },
+    );
+  }
+
   /**
    * Updates the status of a delivery.
    */
@@ -253,8 +390,7 @@ export class LogisticsService {
     const allowedStatuses: DeliveryStatus[] = [
       DeliveryStatus.EN_ROUTE_TO_PICKUP,
       DeliveryStatus.PICKED_UP,
-      DeliveryStatus.EN_ROUTE_TO_CUSTOMER,
-      DeliveryStatus.DELIVERED,
+      DeliveryStatus.EN_ROUTE_TO_CUSTOMER
     ];
 
     if (
@@ -275,10 +411,7 @@ export class LogisticsService {
         OrderStatus.OUT_FOR_DELIVERY,
 
       [DeliveryStatus.EN_ROUTE_TO_CUSTOMER]:
-        OrderStatus.OUT_FOR_DELIVERY,
-
-      [DeliveryStatus.DELIVERED]:
-        OrderStatus.DELIVERED,
+        OrderStatus.OUT_FOR_DELIVERY
     };
 
     const orderStatus =
@@ -334,30 +467,7 @@ export class LogisticsService {
         },
       );
 
-    // Give the partner the delivery earning
-    // once, when the delivery is completed.
-    if (
-      dto.status === DeliveryStatus.DELIVERED &&
-      delivery.partnerId
-    ) {
-      const existingEarning =
-        await this.prisma.driverEarning.findFirst({
-          where: {
-            partnerId: delivery.partnerId,
-            note: `Delivery ${deliveryId}`,
-          },
-        });
-
-      if (!existingEarning) {
-        await this.prisma.driverEarning.create({
-          data: {
-            partnerId: delivery.partnerId,
-            amount: 15,
-            note: `Delivery ${deliveryId}`,
-          },
-        });
-      }
-    }
+    
 
     return result;
   }

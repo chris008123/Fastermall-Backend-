@@ -438,6 +438,66 @@ async function main() {
   console.log(`Seeded ${foodItems.length} food menu items.`);
   console.log('Food seed completed successfully.');
 
+    // ============================================================
+  // LAUNDRY
+  // ============================================================
+
+  console.log('Seeding laundry catalog...');
+
+  const laundryCatalogItems = [
+    {
+      id: 'shirt',
+      name: 'Shirt / Top',
+      unitPrice: 5,
+      isActive: true,
+    },
+    {
+      id: 'trouser',
+      name: 'Trouser / Jeans',
+      unitPrice: 6,
+      isActive: true,
+    },
+    {
+      id: 'bedsheet',
+      name: 'Bedsheet',
+      unitPrice: 8,
+      isActive: true,
+    },
+    {
+      id: 'towel',
+      name: 'Towel',
+      unitPrice: 6,
+      isActive: true,
+    },
+    {
+      id: 'blanket_small',
+      name: 'Blanket',
+      description: 'Single/small',
+      unitPrice: 15,
+      isActive: true,
+    },
+    {
+      id: 'blanket_big',
+      name: 'Blanket',
+      description: 'Double/large',
+      unitPrice: 22,
+      isActive: true,
+    },
+  ];
+
+  for (const item of laundryCatalogItems) {
+    await prisma.laundryCatalogItem.upsert({
+      where: { id: item.id },
+      update: item,
+      create: item,
+    });
+  }
+
+  console.log(
+    `Seeded ${laundryCatalogItems.length} laundry catalog items.`,
+  );
+  console.log('Laundry seed completed successfully.');
+
   // ============================================================
   // SUMMARY
   // ============================================================

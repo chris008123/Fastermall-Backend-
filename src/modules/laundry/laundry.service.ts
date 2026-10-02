@@ -5,11 +5,7 @@ import { CreateLaundryOrderDto } from './dto/create-laundry-order.dto';
 import { UpdateLaundryStatusDto } from './dto/update-laundry-status.dto';
 
 // Flat per-item price for MVP — replace with a real pricing table per package later
-const PACKAGE_PRICES: Record<string, number> = {
-  standard: 5,
-  express: 8,
-  premium: 12,
-};
+
 
 @Injectable()
 export class LaundryService {
@@ -18,27 +14,94 @@ export class LaundryService {
     private readonly events: EventEmitter2,
   ) {}
 
+  async getCatalog() {
+    return this.prisma.laundryCatalogItem.findMany({
+      where: { isActive: true },
+      orderBy: { name: 'asc' },
+    });
+  }
+
   async createOrder(customerId: string, dto: CreateLaundryOrderDto) {
-    const pricePerItem = PACKAGE_PRICES[dto.servicePackage.toLowerCase()] ?? PACKAGE_PRICES.standard;
-    const totalAmount = pricePerItem * dto.items.length;
+    const catalogIds = dto.items.map((item) => item.catalogItemId);
+
+    const catalogItems = await this.prisma.laundryCatalogItem.findMany({
+      where: {
+        id: { in: catalogIds },
+        isActive: true,
+      },
+    });
+
+    if (catalogItems.length !== new Set(catalogIds).size) {
+      throw new NotFoundException(
+        'One or more laundry catalog items were not found',
+      );
+    }
+
+    const catalogMap = new Map(
+      catalogItems.map((item) => [item.id, item]),
+    );
+
+    const laundryItems = dto.items.map((item) => {
+      const catalogItem = catalogMap.get(item.catalogItemId);
+
+      if (!catalogItem) {
+        throw new NotFoundException(
+          `Laundry catalog item ${item.catalogItemId} not found`,
+        );
+      }
+
+      const unitPrice = Number(catalogItem.unitPrice);
+      const lineTotal = unitPrice * item.quantity;
+
+      return {
+        catalogItemId: catalogItem.id,
+        description: catalogItem.name,
+        quantity: item.quantity,
+        unitPrice,
+        lineTotal,
+      };
+    });
+
+    const laundryTotal = laundryItems.reduce(
+      (sum, item) => sum + item.lineTotal,
+      0,
+    );
+
+    const deliveryFee = dto.pickupMode?.toLowerCase() === 'pickup' ? 5 : 0;
+
+    const totalAmount = laundryTotal + deliveryFee;
 
     const order = await this.prisma.laundryOrder.create({
       data: {
         customerId,
-        servicePackage: dto.servicePackage,
         instructions: dto.instructions,
+        pickupMode: dto.pickupMode,
         pickupAt: dto.pickupAt ? new Date(dto.pickupAt) : undefined,
+        deliverAt: dto.deliverAt ? new Date(dto.deliverAt) : undefined,
+        estimatedKg: dto.estimatedKg
+          ? Number(dto.estimatedKg)
+          : undefined,
+        laundryTotal,
+        deliveryFee,
         totalAmount,
-        items: { create: dto.items.map((description) => ({ description })) },
+        items: {
+          create: laundryItems,
+        },
       },
-      include: { items: true },
+      include: {
+        items: {
+          include: {
+            catalogItem: true,
+          },
+        },
+      },
     });
 
-    // Domain Event Bus: Payment/Logistics/Notification modules react to this
     this.events.emit('laundry.created', order);
+
     return order;
   }
-
+  
   findMyOrders(customerId: string) {
     return this.prisma.laundryOrder.findMany({
       where: { customerId },

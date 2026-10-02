@@ -13,6 +13,11 @@ import { StaffRole } from '@prisma/client';
 export class LaundryController {
   constructor(private readonly laundryService: LaundryService) {}
 
+  @Get('catalog')
+  getCatalog() {
+    return this.laundryService.getCatalog();
+  }
+
   @Post('orders')
   create(@CurrentUser() user: { userId: string }, @Body() dto: CreateLaundryOrderDto) {
     return this.laundryService.createOrder(user.userId, dto);
