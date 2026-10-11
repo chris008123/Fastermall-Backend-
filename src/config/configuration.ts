@@ -12,6 +12,10 @@ export default () => ({
   // Used once to create your very first admin via POST /staff/bootstrap-admin.
   // Set this to a long random string in your .env / Render environment variables.
   adminBootstrapSecret: process.env.ADMIN_BOOTSTRAP_SECRET,
+  orders: {
+    // Flat delivery fee added to marketplace orders (GHS). Set to 0 for free delivery.
+    marketplaceDeliveryFee: parseFloat(process.env.MARKETPLACE_DELIVERY_FEE ?? '5'),
+  },
   payments: {
     // 'paystack' (default) or 'mock' (local dev only — refused in production)
     provider: process.env.PAYMENT_PROVIDER || 'paystack',

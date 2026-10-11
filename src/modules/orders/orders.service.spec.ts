@@ -3,7 +3,7 @@ import { OrdersService } from './orders.service';
 
 process.env.DELIVERY_CODE_ENCRYPTION_KEY = '0'.repeat(64);
 
-function setup(menuItems: any[], vendorFee: any = '7.50') {
+function setup(menuItems: any[], vendorFee: any = '7.50', marketplaceFee = 5) {
   const created: any[] = [];
   const prisma: any = {
     foodVendor: { findUnique: jest.fn().mockResolvedValue({ id: 'v1', deliveryFee: vendorFee }) },
@@ -18,7 +18,8 @@ function setup(menuItems: any[], vendorFee: any = '7.50') {
   };
   const food = { getMenuItemsByIds: jest.fn().mockResolvedValue(menuItems) };
   const events = { emit: jest.fn() };
-  const svc = new OrdersService(prisma, {} as any, food as any, events as any);
+  const config = { get: jest.fn((k: string) => (k === 'orders.marketplaceDeliveryFee' ? marketplaceFee : undefined)) };
+  const svc = new OrdersService(prisma, {} as any, food as any, events as any, config as any);
   return { svc, prisma, created };
 }
 
@@ -50,5 +51,21 @@ describe('OrdersService food delivery fee', () => {
     await expect(
       svc.createOrder('u1', dto({ items: [{ menuItemId: 'm1', quantity: 1 }, { menuItemId: 'm2', quantity: 1 }] })),
     ).rejects.toBeInstanceOf(BadRequestException);
+  });
+});
+
+describe('OrdersService marketplace delivery fee', () => {
+  it('adds the configured flat fee and ignores the one the client sends', async () => {
+    const { svc, created } = setup([], '0', 5);
+    (svc as any).marketplace = {
+      getProductsByIds: jest.fn().mockResolvedValue([{ id: 'p1', price: 20, stock: 9, name: 'P' }]),
+      decrementStock: jest.fn(),
+    };
+
+    await svc.createOrder('u1', { type: 'MARKETPLACE', items: [{ productId: 'p1', quantity: 1 }], deliveryFee: 0 } as any);
+
+    expect(created).toHaveLength(1);
+    expect(created[0].deliveryFee).toBe(5);
+    expect(created[0].totalAmount).toBe(25);
   });
 });

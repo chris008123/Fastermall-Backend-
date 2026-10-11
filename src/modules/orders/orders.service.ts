@@ -3,6 +3,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { OrderType } from '@prisma/client';
 import { PrismaService } from '../../database/prisma.service';
@@ -24,6 +25,7 @@ export class OrdersService {
     private readonly marketplace: MarketplaceService,
     private readonly food: FoodService,
     private readonly events: EventEmitter2,
+    private readonly config: ConfigService,
   ) {}
 
   async createOrder(customerId: string, dto: CreateOrderDto) {
@@ -124,8 +126,15 @@ export class OrdersService {
       0,
     );
 
+    // Food: the vendor's own fee. Marketplace: one flat fee from config (the
+    // app shows the same amount at checkout). Always decided here, never by
+    // the client.
     const deliveryFee =
-      dto.type === OrderType.FOOD ? serverDeliveryFee : 0;
+      dto.type === OrderType.FOOD
+        ? serverDeliveryFee
+        : dto.type === OrderType.MARKETPLACE
+          ? Number(this.config.get<number>('orders.marketplaceDeliveryFee') ?? 0)
+          : 0;
 
     const totalAmount = subtotal + deliveryFee;
 
