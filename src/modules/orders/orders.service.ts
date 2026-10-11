@@ -11,6 +11,7 @@ import { FoodService } from '../food/food.service';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { UpdateOrderStatusDto } from './dto/update-order-status.dto';
 import * as bcrypt from 'bcrypt';
+import { randomInt } from 'crypto';
 import {
   encryptDeliveryCode,
   decryptDeliveryCode,
@@ -32,9 +33,9 @@ export class OrdersService {
       );
     }
 
-    if (dto.deliveryFee !== undefined && dto.deliveryFee < 0) {
-      throw new BadRequestException('Delivery fee cannot be negative');
-    }
+    // dto.deliveryFee is still accepted (older app versions send it) but is
+    // ignored: the fee is always read from the vendor on the server.
+    let serverDeliveryFee = 0;
 
     let lineItems: {
       productId?: string;
@@ -80,6 +81,19 @@ export class OrdersService {
 
       const menuItems = await this.food.getMenuItemsByIds(ids);
 
+      const vendorIds = [...new Set(menuItems.map((m) => m.vendorId))];
+      if (vendorIds.length > 1) {
+        throw new BadRequestException(
+          'A food order can only contain items from one vendor',
+        );
+      }
+      if (vendorIds.length === 1) {
+        const vendor = await this.prisma.foodVendor.findUnique({
+          where: { id: vendorIds[0] },
+        });
+        serverDeliveryFee = Number(vendor?.deliveryFee ?? 0);
+      }
+
       lineItems = dto.items.map((item) => {
         const menuItem = menuItems.find(
           (menuItem) => menuItem.id === item.menuItemId,
@@ -111,9 +125,7 @@ export class OrdersService {
     );
 
     const deliveryFee =
-      dto.type === OrderType.FOOD
-        ? Number(dto.deliveryFee ?? 0)
-        : 0;
+      dto.type === OrderType.FOOD ? serverDeliveryFee : 0;
 
     const totalAmount = subtotal + deliveryFee;
 
@@ -160,9 +172,7 @@ export class OrdersService {
       dto.type === OrderType.FOOD ||
       dto.type === OrderType.MARKETPLACE
     ) {
-      const deliveryCode = Math.floor(
-        100000 + Math.random() * 900000,
-      ).toString();
+      const deliveryCode = randomInt(100000, 1000000).toString();
 
       const deliveryCodeHash = await bcrypt.hash(
         deliveryCode,

@@ -19,6 +19,10 @@ model User {
   updatedAt      DateTime        @updatedAt
   otpCodeHash    String?
   otpExpiresAt   DateTime?
+  otpAttempts    Int             @default(0)
+  resetCodeHash  String?
+  resetExpiresAt DateTime?
+  resetAttempts  Int             @default(0)
   laundryOrders  LaundryOrder[]
   notifications  Notification[]
   orders         Order[]
@@ -279,6 +283,9 @@ model Payment {
   method         PaymentMethod
   status         PaymentStatus @default(PENDING)
   providerRef    String?
+  reference      String?       @unique
+  provider       String?
+  paidAt         DateTime?
   createdAt      DateTime      @default(now())
   laundryOrder   LaundryOrder? @relation(fields: [laundryOrderId], references: [id])
   order          Order?        @relation(fields: [orderId], references: [id])

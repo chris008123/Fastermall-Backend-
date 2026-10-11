@@ -110,7 +110,7 @@ export class LaundryService {
     });
   }
 
-  async findOne(id: string) {
+  private async getOrThrow(id: string) {
     const order = await this.prisma.laundryOrder.findUnique({
       where: { id },
       include: { items: true },
@@ -119,9 +119,21 @@ export class LaundryService {
     return order;
   }
 
+  // Customers can only read their own orders; laundry staff and admins can
+  // read any. A stranger's order answers "not found", not "forbidden", so ids
+  // can't be probed.
+  async findOne(id: string, requester: { userId: string; role?: string }) {
+    const order = await this.getOrThrow(id);
+    const isStaff = requester.role === 'ADMIN' || requester.role === 'LAUNDRY_STAFF';
+    if (!isStaff && order.customerId !== requester.userId) {
+      throw new NotFoundException('Laundry order not found');
+    }
+    return order;
+  }
+
   // Staff-only — moves an order through the pickup -> wash -> deliver pipeline
   async updateStatus(id: string, dto: UpdateLaundryStatusDto) {
-    await this.findOne(id);
+    await this.getOrThrow(id);
     const updated = await this.prisma.laundryOrder.update({
       where: { id },
       data: { status: dto.status },

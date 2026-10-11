@@ -5,6 +5,7 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
+import { randomInt } from 'crypto';
 import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../../database/prisma.service';
 import { EmailService } from '../../shared/email/email.service';
@@ -12,8 +13,13 @@ import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import { VerifyOtpDto } from './dto/verify-otp.dto';
 import { ResendOtpDto } from './dto/resend-otp.dto';
+import { ForgotPasswordDto } from './dto/forgot-password.dto';
+import { ResetPasswordDto } from './dto/reset-password.dto';
 
 const OTP_EXPIRY_MINUTES = 10;
+const RESET_EXPIRY_MINUTES = 15;
+// After this many wrong codes the code is thrown away and a new one must be requested.
+const MAX_CODE_ATTEMPTS = 5;
 
 // This module is for the CUSTOMER-facing app only. Vendors, delivery
 // partners, laundry staff, and admins authenticate through the Staff
@@ -31,24 +37,41 @@ export class IdentityService {
       where: { email: dto.email },
     });
 
-    if (existing) {
+    // A verified account really belongs to someone. An UNverified one is just a
+    // half-finished sign-up, so it must not lock the real owner out of their
+    // own email — they simply start again and get a fresh code.
+    if (existing?.isVerified) {
       throw new ConflictException('An account with this email already exists');
     }
 
     const passwordHash = await bcrypt.hash(dto.password, 10);
     const { code, codeHash, expiresAt } = await this.generateOtp();
 
-    await this.prisma.user.create({
-      data: {
-        email: dto.email,
-        phone: dto.phone,
-        fullName: dto.fullName,
-        passwordHash,
-        isVerified: false,
-        otpCodeHash: codeHash,
-        otpExpiresAt: expiresAt,
-      },
-    });
+    if (existing) {
+      await this.prisma.user.update({
+        where: { id: existing.id },
+        data: {
+          phone: dto.phone,
+          fullName: dto.fullName,
+          passwordHash,
+          otpCodeHash: codeHash,
+          otpExpiresAt: expiresAt,
+          otpAttempts: 0,
+        },
+      });
+    } else {
+      await this.prisma.user.create({
+        data: {
+          email: dto.email,
+          phone: dto.phone,
+          fullName: dto.fullName,
+          passwordHash,
+          isVerified: false,
+          otpCodeHash: codeHash,
+          otpExpiresAt: expiresAt,
+        },
+      });
+    }
 
     await this.email.sendOtpEmail(dto.email, code);
 
@@ -84,7 +107,19 @@ export class IdentityService {
     const matches = await bcrypt.compare(dto.code, user.otpCodeHash);
 
     if (!matches) {
-      throw new BadRequestException('Incorrect code');
+      const attempts = user.otpAttempts + 1;
+      const burned = attempts >= MAX_CODE_ATTEMPTS;
+      await this.prisma.user.update({
+        where: { id: user.id },
+        data: burned
+          ? { otpAttempts: 0, otpCodeHash: null, otpExpiresAt: null }
+          : { otpAttempts: attempts },
+      });
+      throw new BadRequestException(
+        burned
+          ? 'Too many incorrect attempts — request a new code'
+          : 'Incorrect code',
+      );
     }
 
     const verifiedUser = await this.prisma.user.update({
@@ -93,6 +128,7 @@ export class IdentityService {
         isVerified: true,
         otpCodeHash: null,
         otpExpiresAt: null,
+        otpAttempts: 0,
       },
     });
 
@@ -121,6 +157,7 @@ export class IdentityService {
       data: {
         otpCodeHash: codeHash,
         otpExpiresAt: expiresAt,
+        otpAttempts: 0,
       },
     });
 
@@ -129,6 +166,73 @@ export class IdentityService {
     return {
       message: 'A new code has been sent to your email',
     };
+  }
+
+  // Always answers the same way, so it can't be used to find out which emails
+  // have accounts. Only verified accounts actually get a code.
+  async forgotPassword(dto: ForgotPasswordDto) {
+    const generic = {
+      message: 'If an account exists for that email, a reset code has been sent.',
+    };
+
+    const user = await this.prisma.user.findUnique({
+      where: { email: dto.email },
+    });
+    if (!user || !user.isVerified) return generic;
+
+    const { code, codeHash } = await this.generateOtp();
+    await this.prisma.user.update({
+      where: { id: user.id },
+      data: {
+        resetCodeHash: codeHash,
+        resetExpiresAt: new Date(Date.now() + RESET_EXPIRY_MINUTES * 60 * 1000),
+        resetAttempts: 0,
+      },
+    });
+
+    await this.email.sendPasswordResetEmail(dto.email, code);
+    return generic;
+  }
+
+  async resetPassword(dto: ResetPasswordDto) {
+    const invalid = new BadRequestException('Invalid or expired code');
+
+    const user = await this.prisma.user.findUnique({
+      where: { email: dto.email },
+    });
+    if (
+      !user ||
+      !user.resetCodeHash ||
+      !user.resetExpiresAt ||
+      user.resetExpiresAt < new Date()
+    ) {
+      throw invalid;
+    }
+
+    const matches = await bcrypt.compare(dto.code, user.resetCodeHash);
+    if (!matches) {
+      const attempts = user.resetAttempts + 1;
+      await this.prisma.user.update({
+        where: { id: user.id },
+        data:
+          attempts >= MAX_CODE_ATTEMPTS
+            ? { resetAttempts: 0, resetCodeHash: null, resetExpiresAt: null }
+            : { resetAttempts: attempts },
+      });
+      throw invalid;
+    }
+
+    await this.prisma.user.update({
+      where: { id: user.id },
+      data: {
+        passwordHash: await bcrypt.hash(dto.newPassword, 10),
+        resetCodeHash: null,
+        resetExpiresAt: null,
+        resetAttempts: 0,
+      },
+    });
+
+    return { message: 'Password updated. You can now log in.' };
   }
 
   async login(dto: LoginDto) {
@@ -167,13 +271,13 @@ export class IdentityService {
       throw new UnauthorizedException();
     }
 
-    const { passwordHash, otpCodeHash, ...safeUser } = user;
+    const { passwordHash, otpCodeHash, resetCodeHash, ...safeUser } = user;
 
     return safeUser;
   }
 
   private async generateOtp() {
-    const code = Math.floor(100000 + Math.random() * 900000).toString();
+    const code = randomInt(100000, 1000000).toString();
     const codeHash = await bcrypt.hash(code, 10);
     const expiresAt = new Date(
       Date.now() + OTP_EXPIRY_MINUTES * 60 * 1000,

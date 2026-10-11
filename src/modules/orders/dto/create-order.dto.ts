@@ -41,6 +41,11 @@ export class CreateOrderDto {
   @IsString()
   addressLabel?: string;
 
+  /**
+   * @deprecated Ignored. The delivery fee is set by the server from the
+   * vendor. Kept only so older app versions that still send it are not
+   * rejected by the whitelist validation.
+   */
   @IsOptional()
   @IsNumber()
   @Min(0)

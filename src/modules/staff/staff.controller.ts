@@ -1,4 +1,5 @@
 import { Body, Controller, Get, Post, UseGuards } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import { StaffService } from './staff.service';
 import { LoginStaffDto } from './dto/login-staff.dto';
 import { CreateStaffDto } from './dto/create-staff.dto';
@@ -14,11 +15,13 @@ export class StaffController {
   constructor(private readonly staffService: StaffService) {}
 
   // Public, but self-closing after the first admin exists — see staff.service.ts
+  @Throttle({ default: { limit: 3, ttl: 60_000 } })
   @Post('bootstrap-admin')
   bootstrapAdmin(@Body() dto: BootstrapAdminDto) {
     return this.staffService.bootstrapAdmin(dto);
   }
 
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
   @Post('login')
   login(@Body() dto: LoginStaffDto) {
     return this.staffService.login(dto);

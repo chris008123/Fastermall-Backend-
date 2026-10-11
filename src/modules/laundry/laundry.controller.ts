@@ -29,8 +29,11 @@ export class LaundryController {
   }
 
   @Get('orders/:id')
-  findOne(@Param('id') id: string) {
-    return this.laundryService.findOne(id);
+  findOne(
+    @CurrentUser() user: { userId: string; role?: string },
+    @Param('id') id: string,
+  ) {
+    return this.laundryService.findOne(id, user);
   }
 
   @UseGuards(RolesGuard)

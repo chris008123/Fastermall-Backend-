@@ -43,4 +43,26 @@ export class EmailService {
       throw error;
     }
   }
+
+  async sendPasswordResetEmail(to: string, code: string) {
+    try {
+      await this.transporter.sendMail({
+        from: this.config.get<string>('email.from'),
+        to,
+        subject: 'Reset your Fastermall password',
+        text: `Your password reset code is ${code}. It expires in 15 minutes. If you didn't ask for this, you can ignore this email.`,
+        html: `
+          <div style="font-family: sans-serif; padding: 24px;">
+            <h2>Reset your password</h2>
+            <p>Your Fastermall password reset code is:</p>
+            <p style="font-size: 32px; font-weight: bold; letter-spacing: 4px;">${code}</p>
+            <p>This code expires in 15 minutes. If you didn't ask for this, you can ignore this email — your password won't change.</p>
+          </div>
+        `,
+      });
+    } catch (error) {
+      this.logger.error(`Failed to send password reset email to ${to}`, error);
+      throw error;
+    }
+  }
 }
