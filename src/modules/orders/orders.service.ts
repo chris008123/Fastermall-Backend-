@@ -245,8 +245,8 @@ export class OrdersService {
     return orderWithDelivery;
   }
 
-  findMyOrders(customerId: string) {
-    return this.prisma.order.findMany({
+  async findMyOrders(customerId: string) {
+    const orders = await this.prisma.order.findMany({
       where: { customerId },
       include: {
         items: {
@@ -259,6 +259,15 @@ export class OrdersService {
         delivery: true,
       },
       orderBy: { createdAt: 'desc' },
+    });
+
+    // The stored code hash and encrypted code never leave the server in a
+    // list. (A customer sees their code only when opening one order.)
+    return orders.map((order) => {
+      if (!order.delivery) return order;
+      const { deliveryCodeHash, deliveryCodeEncrypted, ...safeDelivery } =
+        order.delivery;
+      return { ...order, delivery: safeDelivery };
     });
   }
 

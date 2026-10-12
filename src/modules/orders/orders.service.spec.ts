@@ -69,3 +69,19 @@ describe('OrdersService marketplace delivery fee', () => {
     expect(created[0].totalAmount).toBe(25);
   });
 });
+
+describe('OrdersService.findMyOrders', () => {
+  it('never returns the delivery code hash or encrypted code in the list', async () => {
+    const { svc, prisma } = setup([]);
+    prisma.order.findMany = jest.fn().mockResolvedValue([
+      { id: 'o1', delivery: { id: 'd1', status: 'ASSIGNED', deliveryCodeHash: 'h', deliveryCodeEncrypted: 'e' } },
+      { id: 'o2', delivery: null },
+    ]);
+
+    const out = await svc.findMyOrders('u1');
+
+    expect(out[0].delivery).toEqual({ id: 'd1', status: 'ASSIGNED' });
+    expect(JSON.stringify(out)).not.toMatch(/deliveryCodeHash|deliveryCodeEncrypted/);
+    expect(out[1].delivery).toBeNull();
+  });
+});
