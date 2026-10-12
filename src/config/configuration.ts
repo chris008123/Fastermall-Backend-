@@ -12,6 +12,27 @@ export default () => ({
   // Used once to create your very first admin via POST /staff/bootstrap-admin.
   // Set this to a long random string in your .env / Render environment variables.
   adminBootstrapSecret: process.env.ADMIN_BOOTSTRAP_SECRET,
+  orders: {
+    // Flat delivery fee added to marketplace orders (GHS). Set to 0 for free delivery.
+    marketplaceDeliveryFee: parseFloat(process.env.MARKETPLACE_DELIVERY_FEE ?? '5'),
+  },
+  payments: {
+    // 'paystack' (default) or 'mock' (local dev only — refused in production)
+    provider: process.env.PAYMENT_PROVIDER || 'paystack',
+    currency: process.env.PAYMENT_CURRENCY || 'GHS',
+    // Where the provider sends the customer's browser after checkout
+    callbackUrl: process.env.PAYMENT_CALLBACK_URL,
+    paystack: {
+      secretKey: process.env.PAYSTACK_SECRET_KEY,
+      baseUrl: process.env.PAYSTACK_BASE_URL || 'https://api.paystack.co',
+    },
+  },
+  // Comma-separated list of allowed browser origins. Native mobile apps send
+  // no Origin header, so they are unaffected by this.
+  corsOrigins: (process.env.CORS_ORIGINS || '')
+    .split(',')
+    .map((o) => o.trim())
+    .filter(Boolean),
   email: {
   host: process.env.SMTP_HOST,
   port: parseInt(process.env.SMTP_PORT || '587', 10),

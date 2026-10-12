@@ -3,6 +3,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { OrderType } from '@prisma/client';
 import { PrismaService } from '../../database/prisma.service';
@@ -11,6 +12,7 @@ import { FoodService } from '../food/food.service';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { UpdateOrderStatusDto } from './dto/update-order-status.dto';
 import * as bcrypt from 'bcrypt';
+import { randomInt } from 'crypto';
 import {
   encryptDeliveryCode,
   decryptDeliveryCode,
@@ -23,6 +25,7 @@ export class OrdersService {
     private readonly marketplace: MarketplaceService,
     private readonly food: FoodService,
     private readonly events: EventEmitter2,
+    private readonly config: ConfigService,
   ) {}
 
   async createOrder(customerId: string, dto: CreateOrderDto) {
@@ -32,9 +35,9 @@ export class OrdersService {
       );
     }
 
-    if (dto.deliveryFee !== undefined && dto.deliveryFee < 0) {
-      throw new BadRequestException('Delivery fee cannot be negative');
-    }
+    // dto.deliveryFee is still accepted (older app versions send it) but is
+    // ignored: the fee is always read from the vendor on the server.
+    let serverDeliveryFee = 0;
 
     let lineItems: {
       productId?: string;
@@ -80,6 +83,19 @@ export class OrdersService {
 
       const menuItems = await this.food.getMenuItemsByIds(ids);
 
+      const vendorIds = [...new Set(menuItems.map((m) => m.vendorId))];
+      if (vendorIds.length > 1) {
+        throw new BadRequestException(
+          'A food order can only contain items from one vendor',
+        );
+      }
+      if (vendorIds.length === 1) {
+        const vendor = await this.prisma.foodVendor.findUnique({
+          where: { id: vendorIds[0] },
+        });
+        serverDeliveryFee = Number(vendor?.deliveryFee ?? 0);
+      }
+
       lineItems = dto.items.map((item) => {
         const menuItem = menuItems.find(
           (menuItem) => menuItem.id === item.menuItemId,
@@ -110,10 +126,15 @@ export class OrdersService {
       0,
     );
 
+    // Food: the vendor's own fee. Marketplace: one flat fee from config (the
+    // app shows the same amount at checkout). Always decided here, never by
+    // the client.
     const deliveryFee =
       dto.type === OrderType.FOOD
-        ? Number(dto.deliveryFee ?? 0)
-        : 0;
+        ? serverDeliveryFee
+        : dto.type === OrderType.MARKETPLACE
+          ? Number(this.config.get<number>('orders.marketplaceDeliveryFee') ?? 0)
+          : 0;
 
     const totalAmount = subtotal + deliveryFee;
 
@@ -160,9 +181,7 @@ export class OrdersService {
       dto.type === OrderType.FOOD ||
       dto.type === OrderType.MARKETPLACE
     ) {
-      const deliveryCode = Math.floor(
-        100000 + Math.random() * 900000,
-      ).toString();
+      const deliveryCode = randomInt(100000, 1000000).toString();
 
       const deliveryCodeHash = await bcrypt.hash(
         deliveryCode,
@@ -226,8 +245,8 @@ export class OrdersService {
     return orderWithDelivery;
   }
 
-  findMyOrders(customerId: string) {
-    return this.prisma.order.findMany({
+  async findMyOrders(customerId: string) {
+    const orders = await this.prisma.order.findMany({
       where: { customerId },
       include: {
         items: {
@@ -240,6 +259,15 @@ export class OrdersService {
         delivery: true,
       },
       orderBy: { createdAt: 'desc' },
+    });
+
+    // The stored code hash and encrypted code never leave the server in a
+    // list. (A customer sees their code only when opening one order.)
+    return orders.map((order) => {
+      if (!order.delivery) return order;
+      const { deliveryCodeHash, deliveryCodeEncrypted, ...safeDelivery } =
+        order.delivery;
+      return { ...order, delivery: safeDelivery };
     });
   }
 

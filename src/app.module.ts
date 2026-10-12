@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
-import { ThrottlerModule } from '@nestjs/throttler';
+import { APP_GUARD } from '@nestjs/core';
+import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { EventEmitterModule } from '@nestjs/event-emitter';
 import configuration from './config/configuration';
 import { PrismaModule } from './database/prisma.module';
@@ -21,7 +22,7 @@ import { EmailModule } from './shared/email/email.module';
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true, load: [configuration] }),
-    ThrottlerModule.forRoot([{ ttl: 60000, limit: 100 }]),
+    ThrottlerModule.forRoot([{ ttl: 60000, limit: 300 }]),
     EventEmitterModule.forRoot(),
     PrismaModule,
 
@@ -37,6 +38,11 @@ import { EmailModule } from './shared/email/email.module';
     SupportModule,
     AdminModule,
     EmailModule,
+  ],
+  providers: [
+    // Without this guard the throttler is configured but never enforced.
+    // Sensitive routes (login, OTP, reset) add stricter @Throttle limits.
+    { provide: APP_GUARD, useClass: ThrottlerGuard },
   ],
 })
 export class AppModule {}
