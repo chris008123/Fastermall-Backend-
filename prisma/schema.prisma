@@ -23,6 +23,11 @@ model User {
   resetCodeHash  String?
   resetExpiresAt DateTime?
   resetAttempts  Int             @default(0)
+  // Per-account brute-force protection (the per-IP throttle alone can be dodged by rotating IPs).
+  loginFailures    Int           @default(0)
+  loginLockedUntil DateTime?
+  codeFailures     Int           @default(0)
+  codeLockedUntil  DateTime?
   laundryOrders  LaundryOrder[]
   notifications  Notification[]
   orders         Order[]
@@ -41,6 +46,8 @@ model StaffUser {
   isVerified      Boolean                 @default(false)
   createdAt       DateTime                @default(now())
   updatedAt       DateTime                @updatedAt
+  loginFailures    Int                    @default(0)
+  loginLockedUntil DateTime?
   deliveryProfile DeliveryPartnerProfile?
   ownedVendors    FoodVendor[]            @relation("VendorOwner")
 
