@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../database/prisma.service';
 import { CreateCategoryDto } from './dto/create-category.dto';
 import { CreateProductDto } from './dto/create-product.dto';
@@ -137,14 +137,33 @@ export class MarketplaceService {
     });
   }
 
-  async decrementStock(productId: string, quantity: number) {
-    return this.prisma.product.update({
-      where: { id: productId },
-      data: {
-        stock: {
-          decrement: quantity,
-        },
-      },
+  /**
+   * Takes stock for every line or for none. Each line only succeeds if enough
+   * is left at the moment of the update, so two orders racing for the last
+   * unit can't both win and stock can't go negative.
+   */
+  async reserveStock(items: { productId: string; quantity: number }[]) {
+    await this.prisma.$transaction(async (tx) => {
+      for (const { productId, quantity } of items) {
+        const taken = await tx.product.updateMany({
+          where: { id: productId, stock: { gte: quantity } },
+          data: { stock: { decrement: quantity } },
+        });
+        if (taken.count !== 1) {
+          throw new BadRequestException('Insufficient stock for one or more items');
+        }
+      }
     });
+  }
+
+  async releaseStock(items: { productId: string; quantity: number }[]) {
+    await this.prisma.$transaction(
+      items.map(({ productId, quantity }) =>
+        this.prisma.product.update({
+          where: { id: productId },
+          data: { stock: { increment: quantity } },
+        }),
+      ),
+    );
   }
 }
