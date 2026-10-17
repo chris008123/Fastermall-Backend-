@@ -15,6 +15,8 @@ export default () => ({
   orders: {
     // Flat delivery fee added to marketplace orders (GHS). Set to 0 for free delivery.
     marketplaceDeliveryFee: parseFloat(process.env.MARKETPLACE_DELIVERY_FEE ?? '5'),
+    // Unpaid, non-cash orders are cancelled and their stock returned after this many minutes.
+    paymentTimeoutMinutes: parseInt(process.env.ORDER_PAYMENT_TIMEOUT_MINUTES || '30', 10),
   },
   payments: {
     // 'paystack' (default) or 'mock' (local dev only — refused in production)
