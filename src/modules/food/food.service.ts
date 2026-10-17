@@ -1,13 +1,19 @@
 import {
+  BadRequestException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+
+import { StaffRole } from '@prisma/client';
 
 import { PrismaService } from '../../database/prisma.service';
 
 import { CreateVendorDto } from './dto/create-vendor.dto';
 import { CreateMenuItemDto } from './dto/create-menu-item.dto';
 import { UpdateMenuItemDto } from './dto/update-menu-item.dto';
+
+export type StaffActor = { userId: string; role: string };
 
 @Injectable()
 export class FoodService {
@@ -181,23 +187,78 @@ export class FoodService {
   // ADMIN / VENDOR MANAGEMENT
   // ============================================================
 
-  createVendor(dto: CreateVendorDto) {
+  // ADMIN may manage every vendor. A VENDOR may only manage vendors they own.
+  private async assertCanManageVendor(actor: StaffActor, vendorId: string) {
+    const vendor = await this.prisma.foodVendor.findUnique({
+      where: { id: vendorId },
+      select: { id: true, ownerStaffId: true },
+    });
+
+    if (!vendor) {
+      throw new NotFoundException('Vendor not found');
+    }
+
+    if (actor.role === StaffRole.ADMIN) return;
+
+    if (actor.role !== StaffRole.VENDOR || vendor.ownerStaffId !== actor.userId) {
+      throw new ForbiddenException('You do not manage this vendor');
+    }
+  }
+
+  private async assertIsVendorStaff(staffId: string) {
+    const staff = await this.prisma.staffUser.findUnique({
+      where: { id: staffId },
+      select: { role: true },
+    });
+
+    if (!staff || staff.role !== StaffRole.VENDOR) {
+      throw new BadRequestException('Owner must be an existing VENDOR staff account');
+    }
+  }
+
+  async createVendor(dto: CreateVendorDto) {
+    if (dto.ownerStaffId) {
+      await this.assertIsVendorStaff(dto.ownerStaffId);
+    }
+
     return this.prisma.foodVendor.create({
       data: dto,
     });
   }
 
-  createMenuItem(dto: CreateMenuItemDto) {
+  async assignVendorOwner(vendorId: string, ownerStaffId: string) {
+    await this.findOneVendor(vendorId);
+    await this.assertIsVendorStaff(ownerStaffId);
+
+    return this.prisma.foodVendor.update({
+      where: { id: vendorId },
+      data: { ownerStaffId },
+    });
+  }
+
+  async createMenuItem(actor: StaffActor, dto: CreateMenuItemDto) {
+    await this.assertCanManageVendor(actor, dto.vendorId);
+
     return this.prisma.menuItem.create({
       data: dto,
     });
   }
 
   async updateMenuItem(
+    actor: StaffActor,
     id: string,
     dto: UpdateMenuItemDto,
   ) {
-    await this.findOneMenuItem(id);
+    const item = await this.prisma.menuItem.findUnique({
+      where: { id },
+      select: { vendorId: true },
+    });
+
+    if (!item) {
+      throw new NotFoundException('Menu item not found');
+    }
+
+    await this.assertCanManageVendor(actor, item.vendorId);
 
     return this.prisma.menuItem.update({
       where: { id },

@@ -16,10 +16,12 @@ import { FoodService } from './food.service';
 import { CreateVendorDto } from './dto/create-vendor.dto';
 import { CreateMenuItemDto } from './dto/create-menu-item.dto';
 import { UpdateMenuItemDto } from './dto/update-menu-item.dto';
+import { AssignVendorOwnerDto } from './dto/assign-vendor-owner.dto';
 
 import { JwtAuthGuard } from '../../shared/guards/jwt-auth.guard';
 import { RolesGuard } from '../../shared/guards/roles.guard';
 import { Roles } from '../../shared/decorators/roles.decorator';
+import { CurrentUser } from '../../shared/decorators/current-user.decorator';
 @Controller('food')
 export class FoodController {
   constructor(
@@ -76,7 +78,7 @@ export class FoodController {
   // ============================================================
 
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(StaffRole.ADMIN, StaffRole.VENDOR)
+  @Roles(StaffRole.ADMIN)
   @Post('vendors')
   createVendor(
     @Body() dto: CreateVendorDto,
@@ -85,21 +87,33 @@ export class FoodController {
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(StaffRole.ADMIN)
+  @Patch('vendors/:id/owner')
+  assignVendorOwner(
+    @Param('id') id: string,
+    @Body() dto: AssignVendorOwnerDto,
+  ) {
+    return this.foodService.assignVendorOwner(id, dto.ownerStaffId);
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(StaffRole.ADMIN, StaffRole.VENDOR)
   @Post('menu-items')
   createMenuItem(
+    @CurrentUser() user: { userId: string; role: string },
     @Body() dto: CreateMenuItemDto,
   ) {
-    return this.foodService.createMenuItem(dto);
+    return this.foodService.createMenuItem(user, dto);
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(StaffRole.ADMIN, StaffRole.VENDOR)
   @Patch('menu-items/:id')
   updateMenuItem(
+    @CurrentUser() user: { userId: string; role: string },
     @Param('id') id: string,
     @Body() dto: UpdateMenuItemDto,
   ) {
-    return this.foodService.updateMenuItem(id, dto);
+    return this.foodService.updateMenuItem(user, id, dto);
   }
 }
