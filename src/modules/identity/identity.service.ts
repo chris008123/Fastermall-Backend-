@@ -15,6 +15,16 @@ import { VerifyOtpDto } from './dto/verify-otp.dto';
 import { ResendOtpDto } from './dto/resend-otp.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
+import {
+  CODE_LOCK_MS,
+  DUMMY_PASSWORD_HASH,
+  LOGIN_LOCK_MS,
+  MAX_LOGIN_FAILURES,
+  MAX_TOTAL_CODE_FAILURES,
+  isLocked,
+  issuedRecently,
+  tooManyAttempts,
+} from '../../shared/utils/lockout';
 
 const OTP_EXPIRY_MINUTES = 10;
 const RESET_EXPIRY_MINUTES = 15;
@@ -42,6 +52,14 @@ export class IdentityService {
     // own email — they simply start again and get a fresh code.
     if (existing?.isVerified) {
       throw new ConflictException('An account with this email already exists');
+    }
+
+    if (
+      existing &&
+      (isLocked(existing.codeLockedUntil) ||
+        issuedRecently(existing.otpExpiresAt, OTP_EXPIRY_MINUTES * 60_000))
+    ) {
+      throw tooManyAttempts('Please wait a minute before requesting another code');
     }
 
     const passwordHash = await bcrypt.hash(dto.password, 10);
@@ -96,6 +114,10 @@ export class IdentityService {
       );
     }
 
+    if (isLocked(user.codeLockedUntil)) {
+      throw tooManyAttempts('Too many incorrect codes. Please try again later.');
+    }
+
     if (
       !user.otpCodeHash ||
       !user.otpExpiresAt ||
@@ -109,12 +131,20 @@ export class IdentityService {
     if (!matches) {
       const attempts = user.otpAttempts + 1;
       const burned = attempts >= MAX_CODE_ATTEMPTS;
-      await this.prisma.user.update({
+      const after = await this.prisma.user.update({
         where: { id: user.id },
-        data: burned
-          ? { otpAttempts: 0, otpCodeHash: null, otpExpiresAt: null }
-          : { otpAttempts: attempts },
+        data: {
+          ...(burned
+            ? { otpAttempts: 0, otpCodeHash: null, otpExpiresAt: null }
+            : { otpAttempts: attempts }),
+          codeFailures: { increment: 1 },
+        },
+        select: { codeFailures: true },
       });
+      if ((after?.codeFailures ?? 0) >= MAX_TOTAL_CODE_FAILURES) {
+        await this.lockCodeFlows(user.id);
+        throw tooManyAttempts('Too many incorrect codes. Please try again later.');
+      }
       throw new BadRequestException(
         burned
           ? 'Too many incorrect attempts — request a new code'
@@ -129,6 +159,7 @@ export class IdentityService {
         otpCodeHash: null,
         otpExpiresAt: null,
         otpAttempts: 0,
+        codeFailures: 0,
       },
     });
 
@@ -148,6 +179,13 @@ export class IdentityService {
       throw new BadRequestException(
         'This account is already verified — try logging in instead',
       );
+    }
+
+    if (
+      isLocked(user.codeLockedUntil) ||
+      issuedRecently(user.otpExpiresAt, OTP_EXPIRY_MINUTES * 60_000)
+    ) {
+      throw tooManyAttempts('Please wait a minute before requesting another code');
     }
 
     const { code, codeHash, expiresAt } = await this.generateOtp();
@@ -180,6 +218,15 @@ export class IdentityService {
     });
     if (!user || !user.isVerified) return generic;
 
+    // Too soon after the last code, or the account's code flows are locked:
+    // answer the same way but send nothing (no inbox spam, no new guesses).
+    if (
+      isLocked(user.codeLockedUntil) ||
+      issuedRecently(user.resetExpiresAt, RESET_EXPIRY_MINUTES * 60_000)
+    ) {
+      return generic;
+    }
+
     const { code, codeHash } = await this.generateOtp();
     await this.prisma.user.update({
       where: { id: user.id },
@@ -202,6 +249,7 @@ export class IdentityService {
     });
     if (
       !user ||
+      isLocked(user.codeLockedUntil) ||
       !user.resetCodeHash ||
       !user.resetExpiresAt ||
       user.resetExpiresAt < new Date()
@@ -212,13 +260,19 @@ export class IdentityService {
     const matches = await bcrypt.compare(dto.code, user.resetCodeHash);
     if (!matches) {
       const attempts = user.resetAttempts + 1;
-      await this.prisma.user.update({
+      const after = await this.prisma.user.update({
         where: { id: user.id },
-        data:
-          attempts >= MAX_CODE_ATTEMPTS
+        data: {
+          ...(attempts >= MAX_CODE_ATTEMPTS
             ? { resetAttempts: 0, resetCodeHash: null, resetExpiresAt: null }
-            : { resetAttempts: attempts },
+            : { resetAttempts: attempts }),
+          codeFailures: { increment: 1 },
+        },
+        select: { codeFailures: true },
       });
+      if ((after?.codeFailures ?? 0) >= MAX_TOTAL_CODE_FAILURES) {
+        await this.lockCodeFlows(user.id);
+      }
       throw invalid;
     }
 
@@ -229,6 +283,9 @@ export class IdentityService {
         resetCodeHash: null,
         resetExpiresAt: null,
         resetAttempts: 0,
+        codeFailures: 0,
+        loginFailures: 0,
+        loginLockedUntil: null,
       },
     });
 
@@ -241,7 +298,14 @@ export class IdentityService {
     });
 
     if (!user) {
+      await bcrypt.compare(dto.password, DUMMY_PASSWORD_HASH);
       throw new UnauthorizedException('Invalid email or password');
+    }
+
+    if (isLocked(user.loginLockedUntil)) {
+      throw tooManyAttempts(
+        'Too many failed login attempts. Try again in 15 minutes, or reset your password.',
+      );
     }
 
     const passwordMatches = await bcrypt.compare(
@@ -250,7 +314,28 @@ export class IdentityService {
     );
 
     if (!passwordMatches) {
+      const after = await this.prisma.user.update({
+        where: { id: user.id },
+        data: { loginFailures: { increment: 1 } },
+        select: { loginFailures: true },
+      });
+      if ((after?.loginFailures ?? 0) >= MAX_LOGIN_FAILURES) {
+        await this.prisma.user.update({
+          where: { id: user.id },
+          data: {
+            loginFailures: 0,
+            loginLockedUntil: new Date(Date.now() + LOGIN_LOCK_MS),
+          },
+        });
+      }
       throw new UnauthorizedException('Invalid email or password');
+    }
+
+    if (user.loginFailures > 0) {
+      await this.prisma.user.update({
+        where: { id: user.id },
+        data: { loginFailures: 0, loginLockedUntil: null },
+      });
     }
 
     if (!user.isVerified) {
@@ -271,9 +356,36 @@ export class IdentityService {
       throw new UnauthorizedException();
     }
 
-    const { passwordHash, otpCodeHash, resetCodeHash, ...safeUser } = user;
+    const {
+      passwordHash,
+      otpCodeHash,
+      resetCodeHash,
+      loginFailures,
+      loginLockedUntil,
+      codeFailures,
+      codeLockedUntil,
+      ...safeUser
+    } = user;
 
     return safeUser;
+  }
+
+  // Shuts verify-otp / forgot-password / reset-password for this account for a
+  // while and throws away any live codes.
+  private async lockCodeFlows(userId: string) {
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: {
+        codeFailures: 0,
+        codeLockedUntil: new Date(Date.now() + CODE_LOCK_MS),
+        otpCodeHash: null,
+        otpExpiresAt: null,
+        otpAttempts: 0,
+        resetCodeHash: null,
+        resetExpiresAt: null,
+        resetAttempts: 0,
+      },
+    });
   }
 
   private async generateOtp() {

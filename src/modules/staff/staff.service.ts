@@ -12,6 +12,13 @@ import { PrismaService } from '../../database/prisma.service';
 import { LoginStaffDto } from './dto/login-staff.dto';
 import { CreateStaffDto } from './dto/create-staff.dto';
 import { BootstrapAdminDto } from './dto/bootstrap-admin.dto';
+import {
+  DUMMY_PASSWORD_HASH,
+  LOGIN_LOCK_MS,
+  MAX_LOGIN_FAILURES,
+  isLocked,
+  tooManyAttempts,
+} from '../../shared/utils/lockout';
 
 @Injectable()
 export class StaffService {
@@ -23,10 +30,37 @@ export class StaffService {
 
   async login(dto: LoginStaffDto) {
     const staffUser = await this.prisma.staffUser.findUnique({ where: { email: dto.email } });
-    if (!staffUser) throw new UnauthorizedException('Invalid email or password');
+    if (!staffUser) {
+      await bcrypt.compare(dto.password, DUMMY_PASSWORD_HASH);
+      throw new UnauthorizedException('Invalid email or password');
+    }
+
+    if (isLocked(staffUser.loginLockedUntil)) {
+      throw tooManyAttempts('Too many failed login attempts. Try again in 15 minutes.');
+    }
 
     const passwordMatches = await bcrypt.compare(dto.password, staffUser.passwordHash);
-    if (!passwordMatches) throw new UnauthorizedException('Invalid email or password');
+    if (!passwordMatches) {
+      const after = await this.prisma.staffUser.update({
+        where: { id: staffUser.id },
+        data: { loginFailures: { increment: 1 } },
+        select: { loginFailures: true },
+      });
+      if ((after?.loginFailures ?? 0) >= MAX_LOGIN_FAILURES) {
+        await this.prisma.staffUser.update({
+          where: { id: staffUser.id },
+          data: { loginFailures: 0, loginLockedUntil: new Date(Date.now() + LOGIN_LOCK_MS) },
+        });
+      }
+      throw new UnauthorizedException('Invalid email or password');
+    }
+
+    if (staffUser.loginFailures > 0) {
+      await this.prisma.staffUser.update({
+        where: { id: staffUser.id },
+        data: { loginFailures: 0, loginLockedUntil: null },
+      });
+    }
 
     return this.buildAuthResponse(staffUser);
   }
