@@ -42,6 +42,7 @@ model StaffUser {
   createdAt       DateTime                @default(now())
   updatedAt       DateTime                @updatedAt
   deliveryProfile DeliveryPartnerProfile?
+  ownedVendors    FoodVendor[]            @relation("VendorOwner")
 
   @@map("staff_users")
 }
@@ -125,8 +126,11 @@ model FoodVendor {
   rating          Float      @default(0)
   reviewCount     Int        @default(0)
   isOpen          Boolean    @default(true)
+  ownerStaffId    String?
+  owner           StaffUser? @relation("VendorOwner", fields: [ownerStaffId], references: [id], onDelete: SetNull)
   menuItems       MenuItem[]
 
+  @@index([ownerStaffId])
   @@map("food_vendors")
 }
 
