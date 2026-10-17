@@ -19,6 +19,18 @@ import * as bcrypt from 'bcrypt';
 // the current MVP.
 const WALKING_MAX_DISTANCE_KM = 2;
 
+// Wrong delivery codes allowed before the delivery is locked, and how long the lock lasts.
+const MAX_CODE_ATTEMPTS = 5;
+const CODE_LOCK_MS = 5 * 60 * 1000;
+
+// A courier moves a delivery forward only: pickup -> picked up -> on the way.
+// DELIVERED is reached only through the delivery code, never through here.
+const STATUS_RANK: Partial<Record<DeliveryStatus, number>> = {
+  [DeliveryStatus.EN_ROUTE_TO_PICKUP]: 1,
+  [DeliveryStatus.PICKED_UP]: 2,
+  [DeliveryStatus.EN_ROUTE_TO_CUSTOMER]: 3,
+};
+
 // A courier may only see or claim an order delivery once the customer has
 // really paid online (SUCCESSFUL) or chosen to pay cash on delivery.
 // Laundry deliveries are only created after payment succeeds, so they have
@@ -193,36 +205,50 @@ export class LogisticsService {
 
     return this.prisma.$transaction(
       async (tx) => {
-        const updated =
-          await tx.delivery.update({
-            where: {
-              id: deliveryId,
-            },
-            data: {
-              partnerId: profile.id,
-              status:
-                DeliveryStatus.EN_ROUTE_TO_PICKUP,
-            },
-            include: {
-              order: {
-                include: {
-                  customer: {
-                    select: {
-                      id: true,
-                      fullName: true,
-                    },
+        // Only one courier can win: the update matches only while the
+        // delivery is still unclaimed, so a second courier gets count 0.
+        const won = await tx.delivery.updateMany({
+          where: {
+            id: deliveryId,
+            partnerId: null,
+            status: DeliveryStatus.ASSIGNED,
+          },
+          data: {
+            partnerId: profile.id,
+            status: DeliveryStatus.EN_ROUTE_TO_PICKUP,
+          },
+        });
+
+        if (won.count !== 1) {
+          throw new BadRequestException(
+            'This delivery has already been claimed',
+          );
+        }
+
+        const updated = await tx.delivery.findUniqueOrThrow({
+          where: {
+            id: deliveryId,
+          },
+          include: {
+            order: {
+              include: {
+                customer: {
+                  select: {
+                    id: true,
+                    fullName: true,
                   },
-                  items: {
-                    include: {
-                      menuItem: true,
-                      product: true,
-                    },
+                },
+                items: {
+                  include: {
+                    menuItem: true,
+                    product: true,
                   },
                 },
               },
-              laundryOrder: true,
             },
-          });
+            laundryOrder: true,
+          },
+        });
 
         if (delivery.orderId) {
           await tx.order.update({
@@ -283,18 +309,44 @@ export class LogisticsService {
       );
     }
 
-    if (
-      delivery.deliveryCodeLockedUntil &&
-      delivery.deliveryCodeLockedUntil > new Date()
-    ) {
-      throw new BadRequestException(
-        'Delivery code verification is temporarily locked',
-      );
-    }
-
     if (!delivery.deliveryCodeHash) {
       throw new BadRequestException(
         'No delivery verification code exists',
+      );
+    }
+
+    // If an earlier lock has run out, start a fresh set of attempts.
+    // (Only one of several simultaneous requests can match this.)
+    await this.prisma.delivery.updateMany({
+      where: {
+        id: deliveryId,
+        deliveryCodeLockedUntil: { lt: new Date() },
+      },
+      data: {
+        deliveryCodeAttempts: 0,
+        deliveryCodeLockedUntil: null,
+      },
+    });
+
+    // Use up one attempt BEFORE checking the code. The update only matches
+    // while fewer than MAX_CODE_ATTEMPTS have been used, and the database
+    // applies it one at a time, so a burst of parallel guesses cannot get
+    // more than MAX_CODE_ATTEMPTS tries in total.
+    const reserved = await this.prisma.delivery.updateMany({
+      where: {
+        id: deliveryId,
+        partnerId: profile.id,
+        deliveryCodeUsed: false,
+        deliveryCodeAttempts: { lt: MAX_CODE_ATTEMPTS },
+      },
+      data: {
+        deliveryCodeAttempts: { increment: 1 },
+      },
+    });
+
+    if (reserved.count !== 1) {
+      throw new BadRequestException(
+        'Too many incorrect attempts. Try again in 5 minutes.',
       );
     }
 
@@ -304,42 +356,49 @@ export class LogisticsService {
     );
 
     if (!valid) {
-      const attempts =
-        delivery.deliveryCodeAttempts + 1;
-
-      await this.prisma.delivery.update({
+      // Start the lock once the last attempt has been used.
+      await this.prisma.delivery.updateMany({
         where: {
           id: deliveryId,
+          deliveryCodeAttempts: { gte: MAX_CODE_ATTEMPTS },
+          deliveryCodeLockedUntil: null,
         },
         data: {
-          deliveryCodeAttempts: attempts,
-          deliveryCodeLockedUntil:
-            attempts >= 5
-              ? new Date(Date.now() + 5 * 60 * 1000)
-              : null,
+          deliveryCodeLockedUntil: new Date(Date.now() + CODE_LOCK_MS),
         },
       });
 
-      throw new BadRequestException(
-        attempts >= 5
-          ? 'Too many incorrect attempts. Try again in 5 minutes.'
-          : 'Invalid delivery code',
-      );
+      throw new BadRequestException('Invalid delivery code');
     }
 
     return this.prisma.$transaction(
       async (tx) => {
-        const updated =
-          await tx.delivery.update({
-            where: {
-              id: deliveryId,
-            },
-            data: {
-              status: DeliveryStatus.DELIVERED,
-              deliveryCodeUsed: true,
-              verifiedAt: new Date(),
-            },
-          });
+        // The code works once: only the request that flips deliveryCodeUsed
+        // from false to true goes on to mark the delivery done and pay.
+        const done = await tx.delivery.updateMany({
+          where: {
+            id: deliveryId,
+            partnerId: profile.id,
+            deliveryCodeUsed: false,
+          },
+          data: {
+            status: DeliveryStatus.DELIVERED,
+            deliveryCodeUsed: true,
+            verifiedAt: new Date(),
+          },
+        });
+
+        if (done.count !== 1) {
+          throw new BadRequestException(
+            'This delivery code has already been used',
+          );
+        }
+
+        const updated = await tx.delivery.findUniqueOrThrow({
+          where: {
+            id: deliveryId,
+          },
+        });
 
         if (delivery.orderId) {
           await tx.order.update({
@@ -423,17 +482,21 @@ export class LogisticsService {
       }
     }
 
-    const allowedStatuses: DeliveryStatus[] = [
-      DeliveryStatus.EN_ROUTE_TO_PICKUP,
-      DeliveryStatus.PICKED_UP,
-      DeliveryStatus.EN_ROUTE_TO_CUSTOMER
-    ];
+    const newRank = STATUS_RANK[dto.status];
+    const currentRank = STATUS_RANK[delivery.status];
 
-    if (
-      !allowedStatuses.includes(dto.status)
-    ) {
+    if (newRank === undefined) {
       throw new BadRequestException(
         'Invalid delivery status',
+      );
+    }
+
+    // A courier can only move a delivery they hold forward. A delivery that is
+    // unclaimed, delivered or failed cannot be changed from here, and nothing
+    // can be moved backwards.
+    if (currentRank === undefined || newRank < currentRank) {
+      throw new BadRequestException(
+        `Cannot change a delivery from ${delivery.status} to ${dto.status}`,
       );
     }
 
@@ -456,13 +519,27 @@ export class LogisticsService {
     const result =
       await this.prisma.$transaction(
         async (tx) => {
+          // Write only if nobody changed the status since we read it.
+          const moved = await tx.delivery.updateMany({
+            where: {
+              id: deliveryId,
+              status: delivery.status,
+            },
+            data: {
+              status: dto.status,
+            },
+          });
+
+          if (moved.count !== 1) {
+            throw new BadRequestException(
+              'This delivery was just updated. Please refresh and try again.',
+            );
+          }
+
           const updated =
-            await tx.delivery.update({
+            await tx.delivery.findUniqueOrThrow({
               where: {
                 id: deliveryId,
-              },
-              data: {
-                status: dto.status,
               },
               include: {
                 order: {
