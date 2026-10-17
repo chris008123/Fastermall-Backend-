@@ -19,6 +19,17 @@ import * as bcrypt from 'bcrypt';
 // the current MVP.
 const WALKING_MAX_DISTANCE_KM = 2;
 
+// A courier may only see or claim an order delivery once the customer has
+// really paid online (SUCCESSFUL) or chosen to pay cash on delivery.
+// Laundry deliveries are only created after payment succeeds, so they have
+// no orderId and are not filtered here.
+const PAID_OR_CASH = {
+  OR: [
+    { status: 'SUCCESSFUL' as const },
+    { method: 'CASH' as const },
+  ],
+};
+
 @Injectable()
 export class LogisticsService {
   constructor(private readonly prisma: PrismaService) {}
@@ -84,10 +95,17 @@ export class LogisticsService {
       where: {
         partnerId: null,
         status: DeliveryStatus.ASSIGNED,
+        OR: [
+          { orderId: null },
+          { order: { payment: PAID_OR_CASH } },
+        ],
       },
       include: {
         order: {
           include: {
+            payment: {
+              select: { method: true, status: true },
+            },
             customer: {
               select: {
                 id: true,
@@ -153,6 +171,24 @@ export class LogisticsService {
       throw new BadRequestException(
         'This delivery is no longer available',
       );
+    }
+
+    // Never hand out an order that has not been paid for (or set to cash).
+    if (delivery.orderId) {
+      const payment = await this.prisma.payment.findUnique({
+        where: { orderId: delivery.orderId },
+      });
+
+      const payable =
+        payment &&
+        (payment.status === 'SUCCESSFUL' ||
+          payment.method === 'CASH');
+
+      if (!payable) {
+        throw new BadRequestException(
+          'This order has not been paid for yet',
+        );
+      }
     }
 
     return this.prisma.$transaction(
