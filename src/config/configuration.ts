@@ -3,6 +3,8 @@ export default () => ({
   jwt: {
     secret: process.env.JWT_SECRET,
     expiresIn: process.env.JWT_EXPIRES_IN || '7d',
+    // Admin, vendor, courier and laundry staff tokens.
+    staffExpiresIn: process.env.JWT_STAFF_EXPIRES_IN || '12h',
   },
   supabase: {
     url: process.env.SUPABASE_URL,
