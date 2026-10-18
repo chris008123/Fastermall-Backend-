@@ -8,6 +8,7 @@ import {
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import * as bcrypt from 'bcrypt';
+import { createHash, timingSafeEqual } from 'crypto';
 import { PrismaService } from '../../database/prisma.service';
 import { LoginStaffDto } from './dto/login-staff.dto';
 import { CreateStaffDto } from './dto/create-staff.dto';
@@ -100,7 +101,13 @@ export class StaffService {
   // createStaff() above, authenticated as that admin.
   async bootstrapAdmin(dto: BootstrapAdminDto) {
     const expectedSecret = this.config.get<string>('adminBootstrapSecret');
-    if (!expectedSecret || dto.secret !== expectedSecret) {
+    // Compare fixed-length digests in constant time so response timing
+    // can't be used to guess the secret one character at a time.
+    const digest = (v: string) => createHash('sha256').update(v).digest();
+    if (
+      !expectedSecret ||
+      !timingSafeEqual(digest(dto.secret), digest(expectedSecret))
+    ) {
       throw new ForbiddenException('Invalid bootstrap secret');
     }
 
@@ -151,11 +158,16 @@ export class StaffService {
     fullName: string;
     role: string;
   }) {
-    const accessToken = this.jwt.sign({
-      sub: staffUser.id,
-      email: staffUser.email,
-      role: staffUser.role,
-    });
+    // Staff tokens (admin, vendor, courier) are shorter-lived than customer
+    // ones because they carry more power.
+    const accessToken = this.jwt.sign(
+      {
+        sub: staffUser.id,
+        email: staffUser.email,
+        role: staffUser.role,
+      },
+      { expiresIn: this.config.get<string>('jwt.staffExpiresIn') ?? '12h' },
+    );
 
     return {
       accessToken,
