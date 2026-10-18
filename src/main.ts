@@ -5,6 +5,7 @@ import { AppModule } from './app.module';
 import { HttpExceptionFilter } from './shared/filters/http-exception.filter';
 import { ResponseInterceptor } from './shared/interceptors/response.interceptor';
 import { validateEnv } from './config/env.validation';
+import { securityHeaders } from './shared/middleware/security-headers';
 
 async function bootstrap() {
   validateEnv();
@@ -15,6 +16,10 @@ async function bootstrap() {
   // Render (and most hosts) put a proxy in front of the app. Trusting one hop
   // makes rate limiting count each client's real IP instead of the proxy's.
   app.set('trust proxy', 1);
+
+  // Don't announce the framework, and send basic protective headers.
+  app.disable('x-powered-by');
+  app.use(securityHeaders(process.env.NODE_ENV === 'production'));
 
   const origins = (process.env.CORS_ORIGINS || '')
     .split(',')
