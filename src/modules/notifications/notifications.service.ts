@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { OnEvent } from '@nestjs/event-emitter';
 import { PrismaService } from '../../database/prisma.service';
 
@@ -47,7 +47,16 @@ export class NotificationsService {
     return this.prisma.notification.findMany({ where: { userId }, orderBy: { createdAt: 'desc' } });
   }
 
-  async markRead(id: string) {
-    return this.prisma.notification.update({ where: { id }, data: { isRead: true } });
+  // Only the owner can mark a notification read. A notification that belongs
+  // to someone else looks exactly like one that doesn't exist.
+  async markRead(userId: string, id: string) {
+    const result = await this.prisma.notification.updateMany({
+      where: { id, userId },
+      data: { isRead: true },
+    });
+    if (result.count !== 1) {
+      throw new NotFoundException('Notification not found');
+    }
+    return this.prisma.notification.findFirst({ where: { id, userId } });
   }
 }
