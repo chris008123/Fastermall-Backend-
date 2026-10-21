@@ -25,6 +25,7 @@ model User {
   resetAttempts  Int             @default(0)
   laundryOrders  LaundryOrder[]
   notifications  Notification[]
+  devices        Device[]
   orders         Order[]
   supportTickets SupportTicket[]
 
@@ -42,6 +43,8 @@ model StaffUser {
   createdAt       DateTime                @default(now())
   updatedAt       DateTime                @updatedAt
   deliveryProfile DeliveryPartnerProfile?
+  notifications   Notification[]
+  devices         Device[]
 
   @@map("staff_users")
 }
@@ -294,15 +297,40 @@ model Payment {
 }
 
 model Notification {
-  id        String   @id @default(uuid())
-  userId    String
-  title     String
-  body      String
-  isRead    Boolean  @default(false)
-  createdAt DateTime @default(now())
-  user      User     @relation(fields: [userId], references: [id])
+  id          String     @id @default(uuid())
+  userId      String?
+  staffUserId String?
+  title       String
+  body        String
+  type        String     @default("GENERAL")
+  data        Json?
+  isRead      Boolean    @default(false)
+  createdAt   DateTime   @default(now())
+  user        User?      @relation(fields: [userId], references: [id], onDelete: Restrict)
+  staffUser   StaffUser? @relation(fields: [staffUserId], references: [id], onDelete: Restrict)
 
+  @@index([userId, createdAt])
+  @@index([staffUserId, createdAt])
   @@map("notifications")
+}
+
+// Expo push tokens. A device belongs to exactly one owner: a customer (User)
+// or a staff member (StaffUser). The token is unique, so logging in with a
+// different account on the same phone moves the token to the new owner.
+model Device {
+  id          String     @id @default(uuid())
+  token       String     @unique
+  platform    String
+  userId      String?
+  staffUserId String?
+  lastSeenAt  DateTime   @default(now())
+  createdAt   DateTime   @default(now())
+  user        User?      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  staffUser   StaffUser? @relation(fields: [staffUserId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([staffUserId])
+  @@map("devices")
 }
 
 model SupportTicket {

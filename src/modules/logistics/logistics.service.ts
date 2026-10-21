@@ -3,7 +3,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { OnEvent } from '@nestjs/event-emitter';
+import { EventEmitter2, OnEvent } from '@nestjs/event-emitter';
 import {
   DeliveryStatus,
   OrderStatus,
@@ -21,7 +21,31 @@ const WALKING_MAX_DISTANCE_KM = 2;
 
 @Injectable()
 export class LogisticsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly events: EventEmitter2,
+  ) {}
+
+  // Tells Notifications that a delivery moved forward, so the customer can be
+  // pushed. Called after the database transaction has committed.
+  private emitStatusUpdated(
+    delivery: {
+      id: string;
+      status: DeliveryStatus;
+      orderId: string | null;
+      laundryOrderId: string | null;
+    },
+    customerId?: string | null,
+  ) {
+    if (!customerId) return;
+    this.events.emit('delivery.status.updated', {
+      deliveryId: delivery.id,
+      status: delivery.status,
+      customerId,
+      orderId: delivery.orderId ?? undefined,
+      laundryOrderId: delivery.laundryOrderId ?? undefined,
+    });
+  }
 
   /**
    * Creates a delivery after a successful payment.
@@ -43,11 +67,15 @@ export class LogisticsService {
       });
 
       if (!existing) {
-        await this.prisma.delivery.create({
+        const created = await this.prisma.delivery.create({
           data: {
             orderId: payment.orderId,
             status: DeliveryStatus.ASSIGNED,
           },
+        });
+        this.events.emit('delivery.created', {
+          deliveryId: created.id,
+          orderId: payment.orderId,
         });
       }
     } else if (payment.laundryOrderId) {
@@ -58,11 +86,15 @@ export class LogisticsService {
       });
 
       if (!existing) {
-        await this.prisma.delivery.create({
+        const created = await this.prisma.delivery.create({
           data: {
             laundryOrderId: payment.laundryOrderId,
             status: DeliveryStatus.ASSIGNED,
           },
+        });
+        this.events.emit('delivery.created', {
+          deliveryId: created.id,
+          laundryOrderId: payment.laundryOrderId,
         });
       }
     }
@@ -155,7 +187,7 @@ export class LogisticsService {
       );
     }
 
-    return this.prisma.$transaction(
+    const claimed = await this.prisma.$transaction(
       async (tx) => {
         const updated =
           await tx.delivery.update({
@@ -202,6 +234,13 @@ export class LogisticsService {
         return updated;
       },
     );
+
+    this.emitStatusUpdated(
+      claimed,
+      claimed.order?.customer?.id ?? claimed.laundryOrder?.customerId,
+    );
+
+    return claimed;
   }
 
   async verifyDeliveryCode(
@@ -226,6 +265,10 @@ export class LogisticsService {
       await this.prisma.delivery.findUnique({
         where: {
           id: deliveryId,
+        },
+        include: {
+          order: { select: { customerId: true } },
+          laundryOrder: { select: { customerId: true } },
         },
       });
 
@@ -291,7 +334,7 @@ export class LogisticsService {
       );
     }
 
-    return this.prisma.$transaction(
+    const verified = await this.prisma.$transaction(
       async (tx) => {
         const updated =
           await tx.delivery.update({
@@ -339,6 +382,13 @@ export class LogisticsService {
         return updated;
       },
     );
+
+    this.emitStatusUpdated(
+      verified,
+      delivery.order?.customerId ?? delivery.laundryOrder?.customerId,
+    );
+
+    return verified;
   }
 
   /**
@@ -467,7 +517,10 @@ export class LogisticsService {
         },
       );
 
-    
+    this.emitStatusUpdated(
+      result,
+      result.order?.customer?.id ?? result.laundryOrder?.customerId,
+    );
 
     return result;
   }

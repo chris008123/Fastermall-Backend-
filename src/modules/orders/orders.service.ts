@@ -191,13 +191,19 @@ export class OrdersService {
       const deliveryCodeEncrypted =
         encryptDeliveryCode(deliveryCode);
 
-      await this.prisma.delivery.create({
+      const createdDelivery = await this.prisma.delivery.create({
         data: {
           orderId: order.id,
           status: 'ASSIGNED',
           deliveryCodeHash,
           deliveryCodeEncrypted,
         },
+      });
+
+      // Lets Notifications tell available delivery partners about the new job.
+      this.events.emit('delivery.created', {
+        deliveryId: createdDelivery?.id,
+        orderId: order.id,
       });
     }
 
