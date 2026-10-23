@@ -160,6 +160,14 @@ export class NotificationsService {
   // Emitted by Orders/Logistics when a new unclaimed delivery appears.
   @OnEvent('delivery.created')
   async onDeliveryCreated(event: { deliveryId: string; orderId?: string; laundryOrderId?: string }) {
+    // Delivery partners only handle food deliveries; marketplace and laundry
+    // deliveries are handled by admins, so partners are never alerted to them.
+    const delivery = await this.prisma.delivery.findUnique({
+      where: { id: event.deliveryId },
+      select: { order: { select: { type: true } } },
+    });
+    if (delivery?.order?.type !== 'FOOD') return;
+
     const partners = await this.prisma.deliveryPartnerProfile.findMany({
       where: { isAvailable: true },
       select: { staffUserId: true },

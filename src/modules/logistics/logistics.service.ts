@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -7,6 +8,7 @@ import { EventEmitter2, OnEvent } from '@nestjs/event-emitter';
 import {
   DeliveryStatus,
   OrderStatus,
+  OrderType,
   StaffRole,
 } from '@prisma/client';
 
@@ -110,12 +112,18 @@ export class LogisticsService {
 
   /**
    * Returns deliveries that have not yet been claimed.
+   *
+   * Delivery partners only ever see FOOD deliveries. Marketplace and
+   * laundry deliveries are visible to admins only.
    */
-  findUnassigned() {
+  findUnassigned(role?: string) {
     return this.prisma.delivery.findMany({
       where: {
         partnerId: null,
         status: DeliveryStatus.ASSIGNED,
+        ...(role === StaffRole.ADMIN
+          ? {}
+          : { order: { type: OrderType.FOOD } }),
       },
       include: {
         order: {
@@ -148,6 +156,7 @@ export class LogisticsService {
   async claim(
     deliveryId: string,
     userId: string,
+    role?: string,
   ) {
     const profile =
       await this.prisma.deliveryPartnerProfile.findUnique({
@@ -167,11 +176,25 @@ export class LogisticsService {
         where: {
           id: deliveryId,
         },
+        include: {
+          order: { select: { type: true } },
+        },
       });
 
     if (!delivery) {
       throw new NotFoundException(
         'Delivery not found',
+      );
+    }
+
+    // Delivery partners can only take food deliveries. Marketplace and
+    // laundry deliveries are handled by admins.
+    if (
+      role !== StaffRole.ADMIN &&
+      delivery.order?.type !== OrderType.FOOD
+    ) {
+      throw new ForbiddenException(
+        'Only food deliveries can be claimed by delivery partners',
       );
     }
 

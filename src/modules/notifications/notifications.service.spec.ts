@@ -30,6 +30,7 @@ describe('NotificationsService', () => {
         deleteMany: jest.fn().mockResolvedValue({ count: 1 }),
       },
       deliveryPartnerProfile: { findMany: jest.fn().mockResolvedValue([]) },
+      delivery: { findUnique: jest.fn().mockResolvedValue({ order: { type: 'FOOD' } }) },
       order: { findUnique: jest.fn() },
       laundryOrder: { findUnique: jest.fn() },
     };
@@ -132,7 +133,21 @@ describe('NotificationsService', () => {
       expect(prisma.notification.create.mock.calls[0][0].data.body).toContain('out for delivery');
     });
 
-    it('pushes a new delivery only to available partners', async () => {
+    it('never alerts partners about marketplace or laundry deliveries', async () => {
+      prisma.deliveryPartnerProfile.findMany.mockResolvedValue([{ staffUserId: 's1' }]);
+
+      prisma.delivery.findUnique.mockResolvedValue({ order: { type: 'MARKETPLACE' } });
+      await events.emitAsync('delivery.created', { deliveryId: 'd1', orderId: 'o1' });
+
+      prisma.delivery.findUnique.mockResolvedValue({ order: null }); // laundry delivery
+      await events.emitAsync('delivery.created', { deliveryId: 'd2', laundryOrderId: 'l1' });
+      await flush();
+
+      expect(prisma.notification.createMany).not.toHaveBeenCalled();
+      expect(push.sendToOwners).not.toHaveBeenCalled();
+    });
+
+    it('pushes a new food delivery only to available partners', async () => {
       prisma.deliveryPartnerProfile.findMany.mockResolvedValue([{ staffUserId: 's1' }, { staffUserId: 's2' }]);
       await events.emitAsync('delivery.created', { deliveryId: 'd1', orderId: 'o1' });
       await flush();
