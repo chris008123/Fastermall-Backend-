@@ -263,8 +263,21 @@ model Delivery {
   laundryOrder            LaundryOrder?           @relation(fields: [laundryOrderId], references: [id])
   order                   Order?                  @relation(fields: [orderId], references: [id])
   partner                 DeliveryPartnerProfile? @relation(fields: [partnerId], references: [id])
+  statusEvents            DeliveryStatusEvent[]
 
   @@map("deliveries")
+}
+
+// One row each time a delivery moves to a new stage, so the app can show when it happened.
+model DeliveryStatusEvent {
+  id         String         @id @default(uuid())
+  deliveryId String
+  status     DeliveryStatus
+  createdAt  DateTime       @default(now())
+  delivery   Delivery       @relation(fields: [deliveryId], references: [id], onDelete: Cascade)
+
+  @@index([deliveryId, createdAt])
+  @@map("delivery_status_events")
 }
 
 model DriverEarning {

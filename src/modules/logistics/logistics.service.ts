@@ -21,6 +21,15 @@ import * as bcrypt from 'bcrypt';
 // the current MVP.
 const WALKING_MAX_DISTANCE_KM = 2;
 
+// The only moves a partner can make with PATCH /deliveries/:id/status.
+// Claiming sets EN_ROUTE_TO_PICKUP, and DELIVERED only comes from verify-code,
+// so neither appears as a target here. Anything not listed (skipping a step,
+// going backwards, touching a DELIVERED or FAILED job) is rejected.
+const NEXT_STATUS: Partial<Record<DeliveryStatus, DeliveryStatus>> = {
+  [DeliveryStatus.EN_ROUTE_TO_PICKUP]: DeliveryStatus.PICKED_UP,
+  [DeliveryStatus.PICKED_UP]: DeliveryStatus.EN_ROUTE_TO_CUSTOMER,
+};
+
 @Injectable()
 export class LogisticsService {
   constructor(
@@ -254,6 +263,13 @@ export class LogisticsService {
           });
         }
 
+        await tx.deliveryStatusEvent.create({
+          data: {
+            deliveryId,
+            status: DeliveryStatus.EN_ROUTE_TO_PICKUP,
+          },
+        });
+
         return updated;
       },
     );
@@ -382,6 +398,13 @@ export class LogisticsService {
           });
         }
 
+        await tx.deliveryStatusEvent.create({
+          data: {
+            deliveryId,
+            status: DeliveryStatus.DELIVERED,
+          },
+        });
+
         if (delivery.partnerId) {
           const existingEarning =
             await tx.driverEarning.findFirst({
@@ -460,17 +483,14 @@ export class LogisticsService {
       }
     }
 
-    const allowedStatuses: DeliveryStatus[] = [
-      DeliveryStatus.EN_ROUTE_TO_PICKUP,
-      DeliveryStatus.PICKED_UP,
-      DeliveryStatus.EN_ROUTE_TO_CUSTOMER
-    ];
+    // A repeated tap (slow network, double press) is not an error.
+    if (delivery.status === dto.status) {
+      return delivery;
+    }
 
-    if (
-      !allowedStatuses.includes(dto.status)
-    ) {
+    if (NEXT_STATUS[delivery.status] !== dto.status) {
       throw new BadRequestException(
-        'Invalid delivery status',
+        `Cannot change a delivery from ${delivery.status} to ${dto.status}`,
       );
     }
 
@@ -493,13 +513,34 @@ export class LogisticsService {
     const result =
       await this.prisma.$transaction(
         async (tx) => {
+          // Only move the delivery if nobody changed it since we read it.
+          const moved = await tx.delivery.updateMany({
+            where: {
+              id: deliveryId,
+              status: delivery.status,
+            },
+            data: {
+              status: dto.status,
+            },
+          });
+
+          if (moved.count === 0) {
+            throw new BadRequestException(
+              'Delivery status has changed. Refresh and try again.',
+            );
+          }
+
+          await tx.deliveryStatusEvent.create({
+            data: {
+              deliveryId,
+              status: dto.status,
+            },
+          });
+
           const updated =
-            await tx.delivery.update({
+            await tx.delivery.findUniqueOrThrow({
               where: {
                 id: deliveryId,
-              },
-              data: {
-                status: dto.status,
               },
               include: {
                 order: {
@@ -519,6 +560,9 @@ export class LogisticsService {
                   },
                 },
                 laundryOrder: true,
+                statusEvents: {
+                  orderBy: { createdAt: 'asc' },
+                },
               },
             });
 
@@ -619,6 +663,9 @@ export class LogisticsService {
           },
         },
         laundryOrder: true,
+        statusEvents: {
+          orderBy: { createdAt: 'asc' },
+        },
       },
       orderBy: {
         createdAt: 'desc',
