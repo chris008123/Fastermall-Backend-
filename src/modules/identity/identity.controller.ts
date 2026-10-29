@@ -9,6 +9,8 @@ import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
 import { JwtAuthGuard } from '../../shared/guards/jwt-auth.guard';
 import { CurrentUser } from '../../shared/decorators/current-user.decorator';
+import { GoogleLoginDto } from './dto/google-login.dto';
+
 
 // Sensitive routes get a much stricter limit than the global default.
 const STRICT = { default: { limit: 5, ttl: 60_000 } };
@@ -39,6 +41,12 @@ export class IdentityController {
   @Post('login')
   login(@Body() dto: LoginDto) {
     return this.identityService.login(dto);
+  }
+
+  @Throttle(STRICT)
+  @Post('google')
+  google(@Body() dto: GoogleLoginDto) {
+    return this.identityService.loginWithGoogle(dto);
   }
 
   @Throttle(STRICT)

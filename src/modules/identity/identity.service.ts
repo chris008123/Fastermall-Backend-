@@ -2,11 +2,13 @@ import {
   BadRequestException,
   ConflictException,
   Injectable,
+  ServiceUnavailableException,
   UnauthorizedException,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { randomInt } from 'crypto';
 import * as bcrypt from 'bcrypt';
+import { OAuth2Client, TokenPayload } from 'google-auth-library';
 import { PrismaService } from '../../database/prisma.service';
 import { EmailService } from '../../shared/email/email.service';
 import { RegisterDto } from './dto/register.dto';
@@ -15,6 +17,7 @@ import { VerifyOtpDto } from './dto/verify-otp.dto';
 import { ResendOtpDto } from './dto/resend-otp.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
+import { GoogleLoginDto } from './dto/google-login.dto';
 
 const OTP_EXPIRY_MINUTES = 10;
 const RESET_EXPIRY_MINUTES = 15;
@@ -26,6 +29,8 @@ const MAX_CODE_ATTEMPTS = 5;
 // module instead.
 @Injectable()
 export class IdentityService {
+  private googleClient = new OAuth2Client();
+
   constructor(
     private prisma: PrismaService,
     private jwt: JwtService,
@@ -244,6 +249,11 @@ export class IdentityService {
       throw new UnauthorizedException('Invalid email or password');
     }
 
+    // Google-only accounts have no password, so they can't log in this way.
+    if (!user.passwordHash) {
+      throw new UnauthorizedException('Invalid email or password');
+    }
+
     const passwordMatches = await bcrypt.compare(
       dto.password,
       user.passwordHash,
@@ -257,6 +267,81 @@ export class IdentityService {
       throw new UnauthorizedException(
         'Please verify your email before logging in',
       );
+    }
+
+    return this.buildAuthResponse(user);
+  }
+
+  async loginWithGoogle(dto: GoogleLoginDto) {
+    const audience = [
+      process.env.GOOGLE_WEB_CLIENT_ID,
+      process.env.GOOGLE_IOS_CLIENT_ID,
+    ].filter((id): id is string => !!id);
+
+    if (audience.length === 0) {
+      throw new ServiceUnavailableException('Google sign-in is not configured');
+    }
+
+    let payload: TokenPayload | undefined;
+    try {
+      const ticket = await this.googleClient.verifyIdToken({
+        idToken: dto.idToken,
+        audience,
+      });
+      payload = ticket.getPayload();
+    } catch {
+      throw new UnauthorizedException('Invalid Google token');
+    }
+
+    if (!payload?.sub || !payload.email || !payload.email_verified) {
+      throw new UnauthorizedException('Google account email is not verified');
+    }
+
+    const email = payload.email.toLowerCase();
+
+    let user = await this.prisma.user.findUnique({
+      where: { googleId: payload.sub },
+    });
+
+    if (!user) {
+      // register() stores emails as typed, so match without caring about case
+      // to avoid creating a duplicate account for "Ama@x.com" vs "ama@x.com".
+      user = await this.prisma.user.findFirst({
+        where: { email: { equals: email, mode: 'insensitive' } },
+      });
+    }
+
+    if (!user) {
+      user = await this.prisma.user.create({
+        data: {
+          email,
+          googleId: payload.sub,
+          fullName: payload.name ?? email.split('@')[0],
+          isVerified: true,
+        },
+      });
+    } else if (!user.googleId) {
+      user = await this.prisma.user.update({
+        where: { id: user.id },
+        data: {
+          googleId: payload.sub,
+          isVerified: true,
+          // An unverified account may have been pre-registered by someone else
+          // with their own password (or a pending code). Google has now proved
+          // who owns the email, so wipe all of that.
+          ...(user.isVerified
+            ? {}
+            : {
+                passwordHash: null,
+                otpCodeHash: null,
+                otpExpiresAt: null,
+                otpAttempts: 0,
+              }),
+        },
+      });
+    } else if (user.googleId !== payload.sub) {
+      // Same email, but already linked to a different Google account.
+      throw new UnauthorizedException('Invalid Google token');
     }
 
     return this.buildAuthResponse(user);

@@ -12,7 +12,8 @@ model User {
   id             String          @id @default(uuid())
   email          String?         @unique
   phone          String?         @unique
-  passwordHash   String
+  passwordHash   String?
+  googleId       String?         @unique
   fullName       String
   isVerified     Boolean         @default(false)
   createdAt      DateTime        @default(now())
