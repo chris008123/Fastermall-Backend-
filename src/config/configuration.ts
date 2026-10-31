@@ -3,8 +3,10 @@ export default () => ({
   jwt: {
     secret: process.env.JWT_SECRET,
     expiresIn: process.env.JWT_EXPIRES_IN || '7d',
-    // Admin, vendor, courier and laundry staff tokens.
-    staffExpiresIn: process.env.JWT_STAFF_EXPIRES_IN || '12h',
+    // Staff (delivery partner app) use a short access token plus a refresh
+    // token, so a disabled account is cut off within minutes.
+    staffAccessExpiresIn: process.env.STAFF_ACCESS_TOKEN_EXPIRES_IN || '15m',
+    staffRefreshDays: parseInt(process.env.STAFF_REFRESH_TOKEN_DAYS || '30', 10),
   },
   supabase: {
     url: process.env.SUPABASE_URL,
@@ -17,8 +19,6 @@ export default () => ({
   orders: {
     // Flat delivery fee added to marketplace orders (GHS). Set to 0 for free delivery.
     marketplaceDeliveryFee: parseFloat(process.env.MARKETPLACE_DELIVERY_FEE ?? '5'),
-    // Unpaid, non-cash orders are cancelled and their stock returned after this many minutes.
-    paymentTimeoutMinutes: parseInt(process.env.ORDER_PAYMENT_TIMEOUT_MINUTES || '30', 10),
   },
   payments: {
     // 'paystack' (default) or 'mock' (local dev only — refused in production)
