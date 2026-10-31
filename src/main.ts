@@ -5,7 +5,7 @@ import { AppModule } from './app.module';
 import { HttpExceptionFilter } from './shared/filters/http-exception.filter';
 import { ResponseInterceptor } from './shared/interceptors/response.interceptor';
 import { validateEnv } from './config/env.validation';
-import { securityHeaders } from './shared/middleware/security-headers';
+import { requestId } from './shared/middleware/request-id.middleware';
 
 async function bootstrap() {
   validateEnv();
@@ -17,15 +17,18 @@ async function bootstrap() {
   // makes rate limiting count each client's real IP instead of the proxy's.
   app.set('trust proxy', 1);
 
-  // Don't announce the framework, and send basic protective headers.
-  app.disable('x-powered-by');
-  app.use(securityHeaders(process.env.NODE_ENV === 'production'));
+  // Every response carries X-Request-Id (also used in error logs and bodies).
+  app.use(requestId);
 
   const origins = (process.env.CORS_ORIGINS || '')
     .split(',')
     .map((o) => o.trim())
     .filter(Boolean);
-  app.enableCors(origins.length > 0 ? { origin: origins } : undefined);
+  app.enableCors(
+    origins.length > 0
+      ? { origin: origins, exposedHeaders: ['X-Request-Id', 'Retry-After'] }
+      : { exposedHeaders: ['X-Request-Id', 'Retry-After'] },
+  );
 
   app.setGlobalPrefix('api/v1');
 
