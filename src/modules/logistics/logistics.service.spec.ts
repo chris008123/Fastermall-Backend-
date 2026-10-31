@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, ForbiddenException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import * as bcrypt from 'bcrypt';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { LogisticsService } from './logistics.service';
@@ -241,6 +241,26 @@ describe('LogisticsService — food-only rule for delivery partners', () => {
       tx.delivery.updateMany.mockResolvedValue({ count: 0 });
       await expect(svc.verifyDeliveryCode('d1', '123456', 's1')).rejects.toBeInstanceOf(ConflictException);
       expect(tx.driverEarning.create).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('getMyProfile and stage history', () => {
+    it('returns the partner profile', async () => {
+      prisma.deliveryPartnerProfile.findUnique.mockResolvedValue({ id: 'p1', staffUserId: 's1', isAvailable: false });
+      await expect(svc.getMyProfile('s1')).resolves.toMatchObject({ id: 'p1' });
+      expect(prisma.deliveryPartnerProfile.findUnique.mock.calls[0][0].include.staffUser.select).not.toHaveProperty('passwordHash');
+    });
+
+    it('404s for an account with no partner profile', async () => {
+      prisma.deliveryPartnerProfile.findUnique.mockResolvedValue(null);
+      await expect(svc.getMyProfile('s9')).rejects.toBeInstanceOf(NotFoundException);
+    });
+
+    it('adds stageHistory as [{ stage, at }] to my deliveries', async () => {
+      const at = new Date('2026-10-24T14:14:00Z');
+      prisma.delivery.findMany.mockResolvedValue([{ id: 'd1', statusEvents: [{ status: 'PICKED_UP', createdAt: at }] }]);
+      const [d] = await svc.myDeliveries('s1');
+      expect(d.stageHistory).toEqual([{ stage: 'PICKED_UP', at }]);
     });
   });
 });
