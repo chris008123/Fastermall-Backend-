@@ -17,6 +17,11 @@ describe('JwtStrategy', () => {
     expect(prisma.staffSession.findUnique).not.toHaveBeenCalled();
   });
 
+  it("lets customer tokens with role 'CUSTOMER' through (this is what customer login issues)", async () => {
+    await expect(strategy.validate({ sub: 'c1', email: 'c@x.com', role: 'CUSTOMER' })).resolves.toMatchObject({ userId: 'c1', role: 'CUSTOMER' });
+    expect(prisma.staffSession.findUnique).not.toHaveBeenCalled();
+  });
+
   it('accepts a staff token with a live session, taking the role from the database', async () => {
     await expect(strategy.validate({ sub: 'u1', email: 'old@x.com', role: 'ADMIN', sid: 's1' })).resolves.toEqual({
       userId: 'u1', email: 'a@b.com', role: 'DELIVERY_PARTNER', sessionId: 's1',

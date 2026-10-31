@@ -26,8 +26,9 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
   }
 
   async validate(payload: JwtPayload) {
-    // Customer tokens carry no role and are handled as before.
-    if (!payload.role) {
+    // Customer tokens (role 'CUSTOMER', or no role) are handled as before.
+    // Everything else is a staff token and needs a live session.
+    if (!payload.role || payload.role === 'CUSTOMER') {
       return { userId: payload.sub, email: payload.email, role: payload.role };
     }
 
