@@ -833,7 +833,15 @@ export class LogisticsService {
 
     return {
       total,
-      earnings,
+      totalPesewas: earnings.reduce(
+        (sum, earning) => sum + Math.round(Number(earning.amount) * 100),
+        0,
+      ),
+      currency: 'GHS',
+      earnings: earnings.map((earning) => ({
+        ...earning,
+        amountPesewas: Math.round(Number(earning.amount) * 100),
+      })),
     };
   }
 }
