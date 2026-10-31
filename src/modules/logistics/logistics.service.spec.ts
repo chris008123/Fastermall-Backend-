@@ -106,6 +106,33 @@ describe('LogisticsService — food-only rule for delivery partners', () => {
       });
     });
 
+    it('has an optional PAY_VENDOR step: EN_ROUTE_TO_PICKUP -> PAY_VENDOR -> PICKED_UP', async () => {
+      prisma.delivery.findUnique.mockResolvedValue(delivery('EN_ROUTE_TO_PICKUP'));
+      await svc.updateStatus('d1', dto('PAY_VENDOR'), 's1');
+      expect(tx.delivery.updateMany).toHaveBeenLastCalledWith({ where: { id: 'd1', status: 'EN_ROUTE_TO_PICKUP' }, data: { status: 'PAY_VENDOR' } });
+      expect(tx.deliveryStatusEvent.create).toHaveBeenLastCalledWith({ data: { deliveryId: 'd1', status: 'PAY_VENDOR' } });
+      expect(tx.order.update).not.toHaveBeenCalled();
+
+      prisma.delivery.findUnique.mockResolvedValue(delivery('PAY_VENDOR'));
+      await svc.updateStatus('d1', dto('PICKED_UP'), 's1');
+      expect(tx.delivery.updateMany).toHaveBeenLastCalledWith({ where: { id: 'd1', status: 'PAY_VENDOR' }, data: { status: 'PICKED_UP' } });
+    });
+
+    it('PAY_VENDOR is skippable, so older app versions keep working', async () => {
+      prisma.delivery.findUnique.mockResolvedValue(delivery('EN_ROUTE_TO_PICKUP'));
+      await expect(svc.updateStatus('d1', dto('PICKED_UP'), 's1')).resolves.toBeDefined();
+    });
+
+    it('rejects a wrong move with a stable code and the allowed next steps', async () => {
+      prisma.delivery.findUnique.mockResolvedValue(delivery('PAY_VENDOR'));
+      const err: any = await svc.updateStatus('d1', dto('EN_ROUTE_TO_CUSTOMER'), 's1').catch((e) => e);
+      expect(err).toBeInstanceOf(BadRequestException);
+      expect(err.getResponse()).toMatchObject({ code: 'INVALID_STAGE_TRANSITION', allowed: ['PICKED_UP'] });
+      prisma.delivery.findUnique.mockResolvedValue(delivery('PICKED_UP'));
+      const back: any = await svc.updateStatus('d1', dto('PAY_VENDOR'), 's1').catch((e) => e);
+      expect(back.getResponse().code).toBe('INVALID_STAGE_TRANSITION');
+    });
+
     it('moves PICKED_UP to EN_ROUTE_TO_CUSTOMER', async () => {
       prisma.delivery.findUnique.mockResolvedValue(delivery('PICKED_UP'));
       await svc.updateStatus('d1', dto('EN_ROUTE_TO_CUSTOMER'), 's1');
@@ -135,7 +162,9 @@ describe('LogisticsService — food-only rule for delivery partners', () => {
     it('rejects when the status changed between read and write', async () => {
       prisma.delivery.findUnique.mockResolvedValue(delivery('EN_ROUTE_TO_PICKUP'));
       tx.delivery.updateMany.mockResolvedValue({ count: 0 });
-      await expect(svc.updateStatus('d1', dto('PICKED_UP'), 's1')).rejects.toBeInstanceOf(BadRequestException);
+      const err: any = await svc.updateStatus('d1', dto('PICKED_UP'), 's1').catch((e) => e);
+      expect(err).toBeInstanceOf(ConflictException);
+      expect(err.getResponse().code).toBe('DELIVERY_STATE_CHANGED');
       expect(tx.deliveryStatusEvent.create).not.toHaveBeenCalled();
     });
 
@@ -332,6 +361,62 @@ describe('LogisticsService — food-only rule for delivery partners', () => {
         { createdAt: { gt: at(10) } },
         { createdAt: at(10), id: { gt: 'd1' } },
       ]);
+    });
+  });
+
+  describe('handover code never reaches the partner app', () => {
+    const secret = { deliveryCodeHash: '$2b$hash', deliveryCodeEncrypted: 'enc', deliveryCodeAttempts: 2, deliveryCodeLockedUntil: null };
+    const row = (id: string) => ({ id, status: 'ASSIGNED', createdAt: new Date(), statusEvents: [], ...secret });
+    const clean = (d: any) => { for (const k of Object.keys(secret)) expect(d).not.toHaveProperty(k); };
+
+    beforeEach(() => { prisma.deliveryPartnerProfile.findUnique.mockResolvedValue({ id: 'p1', staffUserId: 's1' }); });
+
+    it('is stripped from the unassigned list, with and without paging', async () => {
+      prisma.delivery.findMany.mockResolvedValue([row('d1')]);
+      (await svc.findUnassigned('DELIVERY_PARTNER') as any[]).forEach(clean);
+      ((await svc.findUnassigned('DELIVERY_PARTNER', { limit: 5 }) as any).items as any[]).forEach(clean);
+    });
+
+    it('is stripped from my deliveries, plain and paged', async () => {
+      prisma.delivery.findMany.mockResolvedValue([row('d1')]);
+      (await svc.myDeliveries('s1') as any[]).forEach(clean);
+      ((await svc.myDeliveries('s1', { limit: 5 }) as any).items as any[]).forEach(clean);
+    });
+
+    it('is stripped from the repeated-tap response of advance-stage', async () => {
+      prisma.delivery.findUnique.mockResolvedValue({ id: 'd1', status: 'PICKED_UP', partnerId: 'p1', orderId: 'o1', ...secret });
+      clean(await svc.updateStatus('d1', { status: 'PICKED_UP' } as any, 's1'));
+    });
+  });
+
+  describe('findOne', () => {
+    const base = { id: 'd1', status: 'ASSIGNED', partnerId: null, partner: null, order: { type: 'FOOD' }, statusEvents: [{ status: 'PICKED_UP', createdAt: new Date('2026-10-24T14:14:00Z') }], deliveryCodeHash: 'h', deliveryCodeEncrypted: 'e' };
+
+    it('lets a partner open a food job that is still waiting, without secrets and with history', async () => {
+      prisma.delivery.findUnique.mockResolvedValue(base);
+      const d: any = await svc.findOne('d1', 's1', 'DELIVERY_PARTNER');
+      expect(d.stageHistory).toEqual([{ stage: 'PICKED_UP', at: new Date('2026-10-24T14:14:00Z') }]);
+      expect(d).not.toHaveProperty('deliveryCodeHash');
+      expect(d).not.toHaveProperty('deliveryCodeEncrypted');
+    });
+
+    it('lets a partner open their own job', async () => {
+      prisma.delivery.findUnique.mockResolvedValue({ ...base, status: 'PICKED_UP', partnerId: 'p1', partner: { id: 'p1', staffUserId: 's1' } });
+      await expect(svc.findOne('d1', 's1', 'DELIVERY_PARTNER')).resolves.toMatchObject({ id: 'd1' });
+    });
+
+    it("answers 404 for someone else's job and for a non-food job", async () => {
+      prisma.delivery.findUnique.mockResolvedValue({ ...base, status: 'PICKED_UP', partnerId: 'p2', partner: { id: 'p2', staffUserId: 's2' } });
+      await expect(svc.findOne('d1', 's1', 'DELIVERY_PARTNER')).rejects.toBeInstanceOf(NotFoundException);
+      prisma.delivery.findUnique.mockResolvedValue({ ...base, order: { type: 'MARKETPLACE' } });
+      await expect(svc.findOne('d1', 's1', 'DELIVERY_PARTNER')).rejects.toBeInstanceOf(NotFoundException);
+    });
+
+    it('lets an admin open any delivery, and 404s for an unknown id', async () => {
+      prisma.delivery.findUnique.mockResolvedValue({ ...base, status: 'DELIVERED', partnerId: 'p2', partner: { id: 'p2', staffUserId: 's2' } });
+      await expect(svc.findOne('d1', 'admin1', 'ADMIN')).resolves.toMatchObject({ id: 'd1' });
+      prisma.delivery.findUnique.mockResolvedValue(null);
+      await expect(svc.findOne('nope', 'admin1', 'ADMIN')).rejects.toBeInstanceOf(NotFoundException);
     });
   });
 });
