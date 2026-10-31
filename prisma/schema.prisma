@@ -102,6 +102,8 @@ model DeliveryPartnerProfile {
   // returned by the API.
   payoutNetwork String?
   payoutNumber  String?
+  // Saved app settings (notifications, delivery, navigation). See PreferencesService.
+  preferences   Json?
   createdAt    DateTime            @default(now())
   payouts      PayoutRequest[]
   deliveries   Delivery[]
