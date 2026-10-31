@@ -1,5 +1,12 @@
 export default () => ({
   port: parseInt(process.env.PORT || '3000', 10),
+  documents: {
+    bucket: process.env.DOCUMENTS_BUCKET || 'partner-documents',
+    maxBytes: parseInt(process.env.DOCUMENT_MAX_BYTES || String(5 * 1024 * 1024), 10),
+    // OFF by default: when on, a partner needs every required document
+    // approved before they can accept a job.
+    requireVerification: process.env.PARTNER_REQUIRE_VERIFICATION === 'true',
+  },
   presence: {
     // OFF by default. Turn on (PARTNER_AUTO_OFFLINE=true) only once the app
     // sends location or heartbeat updates, or partners are taken offline
