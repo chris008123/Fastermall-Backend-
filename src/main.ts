@@ -26,8 +26,8 @@ async function bootstrap() {
     .filter(Boolean);
   app.enableCors(
     origins.length > 0
-      ? { origin: origins, exposedHeaders: ['X-Request-Id', 'Retry-After'] }
-      : { exposedHeaders: ['X-Request-Id', 'Retry-After'] },
+      ? { origin: origins, exposedHeaders: ['X-Request-Id', 'Retry-After', 'X-Server-Time', 'ETag'] }
+      : { exposedHeaders: ['X-Request-Id', 'Retry-After', 'X-Server-Time', 'ETag'] },
   );
 
   app.setGlobalPrefix('api/v1');

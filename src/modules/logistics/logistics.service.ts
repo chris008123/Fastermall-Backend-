@@ -1,3 +1,5 @@
+import { afterCursor, toPage } from '../../shared/pagination/cursor';
+import { DeliveryListQueryDto } from './dto/delivery-list-query.dto';
 import {
   BadRequestException,
   ConflictException,
@@ -174,15 +176,17 @@ export class LogisticsService {
    * Delivery partners only ever see FOOD deliveries. Marketplace and
    * laundry deliveries are visible to admins only.
    */
-  findUnassigned(role?: string) {
-    return this.prisma.delivery.findMany({
+  async findUnassigned(role?: string, query: DeliveryListQueryDto = {}) {
+    const rows = await this.prisma.delivery.findMany({
       where: {
         partnerId: null,
         status: DeliveryStatus.ASSIGNED,
         ...(role === StaffRole.ADMIN
           ? {}
           : { order: { type: OrderType.FOOD } }),
+        ...(query.cursor ? afterCursor(query.cursor, 'asc') : {}),
       },
+      ...(query.limit ? { take: query.limit + 1 } : {}),
       include: {
         order: {
           include: {
@@ -202,10 +206,11 @@ export class LogisticsService {
         },
         laundryOrder: true,
       },
-      orderBy: {
-        createdAt: 'asc',
-      },
+      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
     });
+
+    // No paging asked for: the plain array the app already understands.
+    return query.limit || query.cursor ? toPage(rows, query.limit ?? 20) : rows;
   }
 
   /**
@@ -746,7 +751,7 @@ export class LogisticsService {
   /**
    * Returns deliveries assigned to the current partner.
    */
-  async myDeliveries(userId: string) {
+  async myDeliveries(userId: string, query: DeliveryListQueryDto = {}) {
     const profile =
       await this.prisma.deliveryPartnerProfile.findUnique(
         {
@@ -765,7 +770,13 @@ export class LogisticsService {
     const deliveries = await this.prisma.delivery.findMany({
       where: {
         partnerId: profile.id,
+        ...(query.status?.length ? { status: { in: query.status } } : {}),
+        ...(query.updatedSince
+          ? { updatedAt: { gt: new Date(query.updatedSince) } }
+          : {}),
+        ...(query.cursor ? afterCursor(query.cursor, 'desc') : {}),
       },
+      ...(query.limit ? { take: query.limit + 1 } : {}),
       include: {
         order: {
           include: {
@@ -788,12 +799,13 @@ export class LogisticsService {
           orderBy: { createdAt: 'asc' },
         },
       },
-      orderBy: {
-        createdAt: 'desc',
-      },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
     });
 
-    return deliveries.map((d) => this.withStageHistory(d));
+    const shaped = deliveries.map((d) => this.withStageHistory(d));
+
+    // No paging asked for: the plain array the app already understands.
+    return query.limit || query.cursor ? toPage(shaped, query.limit ?? 20) : shaped;
   }
 
   /**

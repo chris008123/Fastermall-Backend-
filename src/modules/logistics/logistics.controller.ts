@@ -2,13 +2,18 @@ import {
   Body,
   Controller,
   Get,
+  Header,
   Param,
   Patch,
   Post,
+  Query,
+  Res,
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
 
+import type { Response } from 'express';
+import { DeliveryListQueryDto } from './dto/delivery-list-query.dto';
 import { LogisticsService } from './logistics.service';
 import { IdempotencyInterceptor } from '../../shared/interceptors/idempotency.interceptor';
 
@@ -34,11 +39,18 @@ export class LogisticsController {
   /**
    * Get deliveries that have not yet been claimed.
    */
+  // `no-cache` = "ask me every time, but answer 304 if nothing changed". The
+  // server adds an ETag automatically, so an unchanged list costs almost no
+  // data on the 30-second refresh.
+  @Header('Cache-Control', 'private, no-cache')
   @Get('deliveries/unassigned')
   findUnassigned(
     @CurrentUser() user: { userId: string; role: string },
+    @Query() query: DeliveryListQueryDto,
+    @Res({ passthrough: true }) res: Response,
   ) {
-    return this.logisticsService.findUnassigned(user.role);
+    res.setHeader('X-Server-Time', new Date().toISOString());
+    return this.logisticsService.findUnassigned(user.role, query);
   }
 
   /**
@@ -127,13 +139,17 @@ export class LogisticsController {
   /**
    * Get deliveries assigned to the current partner.
    */
+  // X-Server-Time is taken BEFORE the query, so a job that changes while the
+  // query runs is picked up by the next `updatedSince` poll instead of lost.
+  @Header('Cache-Control', 'private, no-cache')
   @Get('me/deliveries')
   myDeliveries(
     @CurrentUser() user: { userId: string },
+    @Query() query: DeliveryListQueryDto,
+    @Res({ passthrough: true }) res: Response,
   ) {
-    return this.logisticsService.myDeliveries(
-      user.userId,
-    );
+    res.setHeader('X-Server-Time', new Date().toISOString());
+    return this.logisticsService.myDeliveries(user.userId, query);
   }
 
   /**
