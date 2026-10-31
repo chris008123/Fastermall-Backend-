@@ -57,6 +57,23 @@ model StaffUser {
   @@map("staff_users")
 }
 
+// Remembers the result of an action sent with an Idempotency-Key header, so a
+// retry (after a timeout, say) gets the first result back instead of running
+// the action twice. Rows older than 24 hours are ignored and cleaned up.
+model IdempotencyKey {
+  id          String    @id @default(uuid())
+  staffUserId String
+  key         String
+  fingerprint String
+  response    Json?
+  completedAt DateTime?
+  createdAt   DateTime  @default(now())
+
+  @@unique([staffUserId, key])
+  @@index([createdAt])
+  @@map("idempotency_keys")
+}
+
 // One row per signed-in device. The access token carries this id (`sid`), so
 // logging out or disabling the account ends the session straight away.
 model StaffSession {
