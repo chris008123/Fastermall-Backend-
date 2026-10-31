@@ -8,6 +8,7 @@ import { ConfigService } from '@nestjs/config';
 import { PayoutStatus } from '@prisma/client';
 import { PrismaService } from '../../database/prisma.service';
 import { StaffService } from '../staff/staff.service';
+import { afterCursor, encodeCursor } from '../../shared/pagination/cursor';
 import { SetPayoutDestinationDto } from './dto/set-payout-destination.dto';
 
 /** A Decimal (GHS, 2 places) as whole pesewas. */
@@ -18,21 +19,6 @@ export function toPesewas(value: { toString(): string } | number | string | null
 
 function maskNumber(number: string) {
   return `${number.slice(0, 3)}****${number.slice(-3)}`;
-}
-
-function encodeCursor(at: Date, id: string) {
-  return Buffer.from(`${at.toISOString()}|${id}`).toString('base64url');
-}
-
-function decodeCursor(cursor: string): { at: Date; id: string } {
-  try {
-    const [iso, id] = Buffer.from(cursor, 'base64url').toString().split('|');
-    const at = new Date(iso);
-    if (!id || Number.isNaN(at.getTime())) throw new Error();
-    return { at, id };
-  } catch {
-    throw new BadRequestException({ message: 'Invalid cursor', code: 'INVALID_CURSOR' });
-  }
 }
 
 /**
@@ -115,11 +101,10 @@ export class WalletService {
     const profile = await this.profileFor(userId);
     const take = limit + 1;
 
-    const where: any = { partnerId: profile.id };
-    if (cursor) {
-      const { at, id } = decodeCursor(cursor);
-      where.OR = [{ createdAt: { lt: at } }, { createdAt: at, id: { lt: id } }];
-    }
+    const where: any = {
+      partnerId: profile.id,
+      ...(cursor ? afterCursor(cursor, 'desc') : {}),
+    };
     const orderBy = [{ createdAt: 'desc' as const }, { id: 'desc' as const }];
 
     const [earnings, payouts] = await Promise.all([
