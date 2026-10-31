@@ -233,4 +233,20 @@ describe('NotificationsService', () => {
       await expect(svc.remove('n2', partner)).rejects.toBeInstanceOf(NotFoundException);
     });
   });
+
+  describe('document review', () => {
+    const flush = () => new Promise((r) => setImmediate(r));
+
+    it('tells the partner when a document is approved or rejected, with the reason', async () => {
+      await events.emitAsync('partner.document.reviewed', { staffUserId: 's1', documentId: 'doc1', documentLabel: "Driver's licence", status: 'REJECTED', reason: 'Blurry' });
+      await flush();
+      expect(prisma.notification.create.mock.calls.at(-1)[0].data).toMatchObject({ staffUserId: 's1', type: 'DOCUMENT_REVIEWED', title: 'Document rejected' });
+      expect(prisma.notification.create.mock.calls.at(-1)[0].data.body).toContain('Blurry');
+      expect(push.sendToOwners).toHaveBeenCalledWith({ staffUserIds: ['s1'] }, expect.objectContaining({ data: expect.objectContaining({ type: 'DOCUMENT_REVIEWED', documentId: 'doc1' }) }));
+
+      await events.emitAsync('partner.document.reviewed', { staffUserId: 's1', documentId: 'doc2', documentLabel: 'ID card', status: 'APPROVED' });
+      await flush();
+      expect(prisma.notification.create.mock.calls.at(-1)[0].data.title).toBe('Document approved');
+    });
+  });
 });
