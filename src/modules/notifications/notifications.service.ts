@@ -224,6 +224,27 @@ export class NotificationsService {
     if (quiet.length) void this.push.sendToOwners({ staffUserIds: quiet }, { ...payload, sound: false });
   }
 
+  // Emitted when an admin approves or rejects a partner's document.
+  @OnEvent('partner.document.reviewed')
+  async onPartnerDocumentReviewed(event: {
+    staffUserId: string;
+    documentId: string;
+    documentLabel: string;
+    status: 'APPROVED' | 'REJECTED';
+    reason?: string;
+  }) {
+    const approved = event.status === 'APPROVED';
+    await this.notifyStaff(event.staffUserId, {
+      title: approved ? 'Document approved' : 'Document rejected',
+      body: approved
+        ? `Your ${event.documentLabel.toLowerCase()} was approved.`
+        : `Your ${event.documentLabel.toLowerCase()} was rejected: ${event.reason ?? 'please upload a clearer copy'}`,
+      type: 'DOCUMENT_REVIEWED',
+      data: { documentId: event.documentId, status: event.status },
+      channelId: CHANNELS.deliveries,
+    });
+  }
+
   // ───────── Reading ─────────
 
   // No paging options: everything, as before. With `limit`/`cursor`: a page,
@@ -339,6 +360,24 @@ export class NotificationsService {
     );
     void this.push.sendToOwners(
       { userIds: [userId] },
+      { title: input.title, body: input.body, channelId: input.channelId, data: { type: input.type, ...cleanData(input.data) } },
+    );
+  }
+
+  private async notifyStaff(staffUserId: string, input: NotifyInput) {
+    await this.safely(() =>
+      this.prisma.notification.create({
+        data: {
+          staffUserId,
+          title: input.title,
+          body: input.body,
+          type: input.type,
+          data: cleanData(input.data) as Prisma.InputJsonValue,
+        },
+      }),
+    );
+    void this.push.sendToOwners(
+      { staffUserIds: [staffUserId] },
       { title: input.title, body: input.body, channelId: input.channelId, data: { type: input.type, ...cleanData(input.data) } },
     );
   }
