@@ -98,7 +98,12 @@ model DeliveryPartnerProfile {
   currentLat   Float?
   currentLng   Float?
   vehiclePlate String?
+  // Where cash-outs are sent (mobile money). Only the masked number is ever
+  // returned by the API.
+  payoutNetwork String?
+  payoutNumber  String?
   createdAt    DateTime            @default(now())
+  payouts      PayoutRequest[]
   deliveries   Delivery[]
   staffUser    StaffUser           @relation(fields: [staffUserId], references: [id])
   earnings     DriverEarning[]
@@ -319,6 +324,35 @@ model DeliveryStatusEvent {
 
   @@index([deliveryId, createdAt])
   @@map("delivery_status_events")
+}
+
+enum PayoutStatus {
+  PENDING
+  PAID
+  FAILED
+}
+
+// A partner's request to cash out. Money is whole pesewas (1 GHS = 100), never
+// a floating-point number. PENDING and PAID count against the balance; FAILED
+// gives the money back.
+model PayoutRequest {
+  id                String                 @id @default(uuid())
+  partnerId         String
+  amountPesewas     Int
+  feePesewas        Int                    @default(0)
+  currency          String                 @default("GHS")
+  status            PayoutStatus           @default(PENDING)
+  network           String
+  destinationNumber String
+  destinationMasked String
+  failureReason     String?
+  createdAt         DateTime               @default(now())
+  updatedAt         DateTime               @updatedAt
+  partner           DeliveryPartnerProfile @relation(fields: [partnerId], references: [id])
+
+  @@index([partnerId, createdAt])
+  @@index([status, createdAt])
+  @@map("payout_requests")
 }
 
 model DriverEarning {
