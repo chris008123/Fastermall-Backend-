@@ -482,6 +482,7 @@ enum LaundryStatus {
 enum DeliveryStatus {
   ASSIGNED
   EN_ROUTE_TO_PICKUP
+  PAY_VENDOR
   PICKED_UP
   EN_ROUTE_TO_CUSTOMER
   DELIVERED
