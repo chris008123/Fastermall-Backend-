@@ -16,6 +16,7 @@ import {
 import type { Response } from 'express';
 import { DeliveryListQueryDto } from './dto/delivery-list-query.dto';
 import { Throttle } from '@nestjs/throttler';
+import { DocumentsService } from './documents.service';
 import { PresenceService } from './presence.service';
 import { UpdateLocationDto } from './dto/update-location.dto';
 import { LogisticsService } from './logistics.service';
@@ -39,6 +40,7 @@ export class LogisticsController {
   constructor(
     private readonly logisticsService: LogisticsService,
     private readonly presence: PresenceService,
+    private readonly documents: DocumentsService,
   ) {}
 
   /**
@@ -77,19 +79,21 @@ export class LogisticsController {
    */
   @UseInterceptors(IdempotencyInterceptor)
   @Post('deliveries/:id/accept')
-  accept(
+  async accept(
     @Param('id') id: string,
     @CurrentUser() user: { userId: string; role: string },
   ) {
+    await this.documents.assertCanWork(user.userId, user.role);
     return this.logisticsService.claim(id, user.userId, user.role);
   }
 
   @UseInterceptors(IdempotencyInterceptor)
   @Post('deliveries/:id/claim')
-  claim(
+  async claim(
     @Param('id') id: string,
     @CurrentUser() user: { userId: string; role: string },
   ) {
+    await this.documents.assertCanWork(user.userId, user.role);
     return this.logisticsService.claim(
       id,
       user.userId,
