@@ -54,6 +54,18 @@ export class LogisticsController {
   }
 
   /**
+   * One delivery with its stage history. Must stay below the fixed
+   * 'deliveries/unassigned' route above.
+   */
+  @Get('deliveries/:id')
+  findOne(
+    @Param('id') id: string,
+    @CurrentUser() user: { userId: string; role: string },
+  ) {
+    return this.logisticsService.findOne(id, user.userId, user.role);
+  }
+
+  /**
    * Claim a delivery. `accept` is the name the partner app uses; both
    * routes do exactly the same thing.
    */
