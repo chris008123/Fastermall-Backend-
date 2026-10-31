@@ -2,6 +2,8 @@ import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
+  HttpException,
+  HttpStatus,
   Injectable,
   NotFoundException,
   UnauthorizedException,
@@ -9,11 +11,28 @@ import {
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import * as bcrypt from 'bcrypt';
-import { createHash, randomBytes } from 'crypto';
+import { createHash, randomBytes, randomInt } from 'crypto';
 import { PrismaService } from '../../database/prisma.service';
 import { LoginStaffDto } from './dto/login-staff.dto';
 import { CreateStaffDto } from './dto/create-staff.dto';
 import { BootstrapAdminDto } from './dto/bootstrap-admin.dto';
+import { ForgotStaffPasswordDto } from './dto/forgot-staff-password.dto';
+import { ResetStaffPasswordDto } from './dto/reset-staff-password.dto';
+import { ChangeStaffPasswordDto } from './dto/change-staff-password.dto';
+import { EmailService } from '../../shared/email/email.service';
+
+// Wrong passwords allowed before the account locks, and for how long.
+const MAX_LOGIN_ATTEMPTS = 5;
+const LOCK_MINUTES = 15;
+// Password reset codes: lifetime, wrong guesses allowed, and the gap between
+// two emails for the same account.
+const RESET_EXPIRY_MINUTES = 15;
+const MAX_RESET_ATTEMPTS = 5;
+const RESET_RESEND_SECONDS = 60;
+
+// Compared against when the email is unknown, so "no such account" takes as
+// long as "wrong password" and the two cannot be told apart by timing.
+const DUMMY_HASH = bcrypt.hashSync('not-a-real-password', 10);
 
 @Injectable()
 export class StaffService {
@@ -21,14 +40,19 @@ export class StaffService {
     private prisma: PrismaService,
     private jwt: JwtService,
     private config: ConfigService,
+    private email: EmailService,
   ) {}
 
   async login(dto: LoginStaffDto) {
     const staffUser = await this.prisma.staffUser.findUnique({ where: { email: dto.email } });
-    if (!staffUser) throw new UnauthorizedException('Invalid email or password');
+    if (!staffUser) {
+      await bcrypt.compare(dto.password, DUMMY_HASH);
+      throw new UnauthorizedException('Invalid email or password');
+    }
 
-    const passwordMatches = await bcrypt.compare(dto.password, staffUser.passwordHash);
-    if (!passwordMatches) throw new UnauthorizedException('Invalid email or password');
+    if (!(await this.verifyPassword(staffUser, dto.password))) {
+      throw new UnauthorizedException('Invalid email or password');
+    }
 
     if (!staffUser.isActive) {
       throw new ForbiddenException({
@@ -38,6 +62,211 @@ export class StaffService {
     }
 
     return this.buildAuthResponse(staffUser);
+  }
+
+  /**
+   * Checks a password with lockout. After 5 wrong tries in a row the account
+   * is locked for 15 minutes (429 + Retry-After), even for the right password.
+   * Returns false for a wrong password; throws while locked.
+   */
+  private async verifyPassword(
+    user: {
+      id: string;
+      passwordHash: string;
+      failedLoginAttempts: number;
+      lockedUntil: Date | null;
+    },
+    password: string,
+  ): Promise<boolean> {
+    const now = new Date();
+
+    if (user.lockedUntil && user.lockedUntil > now) {
+      this.throwLocked(user.lockedUntil);
+    }
+
+    // A lock that has run out starts a fresh set of tries.
+    if (user.lockedUntil) {
+      await this.prisma.staffUser.update({
+        where: { id: user.id },
+        data: { failedLoginAttempts: 0, lockedUntil: null },
+      });
+    }
+
+    if (await bcrypt.compare(password, user.passwordHash)) {
+      if (user.failedLoginAttempts > 0 && !user.lockedUntil) {
+        await this.prisma.staffUser.update({
+          where: { id: user.id },
+          data: { failedLoginAttempts: 0 },
+        });
+      }
+      return true;
+    }
+
+    // Counted in one atomic step so parallel guesses cannot dodge the limit.
+    const bumped = await this.prisma.staffUser.update({
+      where: { id: user.id },
+      data: { failedLoginAttempts: { increment: 1 } },
+      select: { failedLoginAttempts: true },
+    });
+
+    if (bumped.failedLoginAttempts >= MAX_LOGIN_ATTEMPTS) {
+      const until = new Date(Date.now() + LOCK_MINUTES * 60 * 1000);
+      await this.prisma.staffUser.update({
+        where: { id: user.id },
+        data: { lockedUntil: until },
+      });
+      this.throwLocked(until);
+    }
+
+    return false;
+  }
+
+  private throwLocked(until: Date): never {
+    const retryAfterSeconds = Math.max(1, Math.ceil((until.getTime() - Date.now()) / 1000));
+    throw new HttpException(
+      {
+        message: 'Too many failed attempts. Try again later.',
+        code: 'ACCOUNT_LOCKED',
+        retryAfterSeconds,
+      },
+      HttpStatus.TOO_MANY_REQUESTS,
+    );
+  }
+
+  /**
+   * Emails a 6-digit reset code. Always answers the same way, so it cannot be
+   * used to find out which emails have accounts.
+   */
+  async forgotPassword(dto: ForgotStaffPasswordDto) {
+    const generic = {
+      message: 'If an account exists for that email, a reset code has been sent.',
+    };
+
+    const user = await this.prisma.staffUser.findUnique({ where: { email: dto.email } });
+    if (!user || !user.isActive) return generic;
+
+    // One email a minute per account, so it cannot be used to flood an inbox.
+    if (user.resetExpiresAt) {
+      const sentAt = user.resetExpiresAt.getTime() - RESET_EXPIRY_MINUTES * 60 * 1000;
+      if (Date.now() - sentAt < RESET_RESEND_SECONDS * 1000) return generic;
+    }
+
+    const code = randomInt(100000, 1000000).toString();
+    await this.prisma.staffUser.update({
+      where: { id: user.id },
+      data: {
+        resetCodeHash: await bcrypt.hash(code, 10),
+        resetExpiresAt: new Date(Date.now() + RESET_EXPIRY_MINUTES * 60 * 1000),
+        resetAttempts: 0,
+      },
+    });
+
+    try {
+      await this.email.sendPasswordResetEmail(dto.email, code);
+    } catch {
+      // Already logged by the email service. The answer stays the same.
+    }
+    return generic;
+  }
+
+  async resetPassword(dto: ResetStaffPasswordDto) {
+    const invalid = () =>
+      new BadRequestException({ message: 'Invalid or expired code', code: 'INVALID_RESET_CODE' });
+
+    const user = await this.prisma.staffUser.findUnique({ where: { email: dto.email } });
+    if (
+      !user ||
+      !user.isActive ||
+      !user.resetCodeHash ||
+      !user.resetExpiresAt ||
+      user.resetExpiresAt < new Date()
+    ) {
+      throw invalid();
+    }
+
+    // Count the try first, atomically, then compare.
+    const { resetAttempts } = await this.prisma.staffUser.update({
+      where: { id: user.id },
+      data: { resetAttempts: { increment: 1 } },
+      select: { resetAttempts: true },
+    });
+
+    const burnCode = () =>
+      this.prisma.staffUser.update({
+        where: { id: user.id },
+        data: { resetCodeHash: null, resetExpiresAt: null, resetAttempts: 0 },
+      });
+
+    if (resetAttempts > MAX_RESET_ATTEMPTS) {
+      await burnCode();
+      throw invalid();
+    }
+
+    if (!(await bcrypt.compare(dto.code, user.resetCodeHash))) {
+      if (resetAttempts >= MAX_RESET_ATTEMPTS) await burnCode();
+      throw invalid();
+    }
+
+    const passwordHash = await bcrypt.hash(dto.newPassword, 10);
+    await this.prisma.$transaction([
+      this.prisma.staffUser.update({
+        where: { id: user.id },
+        data: {
+          passwordHash,
+          resetCodeHash: null,
+          resetExpiresAt: null,
+          resetAttempts: 0,
+          failedLoginAttempts: 0,
+          lockedUntil: null,
+        },
+      }),
+      // Anyone signed in with the old password is signed out.
+      this.prisma.staffSession.updateMany({
+        where: { staffUserId: user.id, revokedAt: null },
+        data: { revokedAt: new Date() },
+      }),
+    ]);
+
+    return { message: 'Password updated. You can now sign in.' };
+  }
+
+  /**
+   * Signed-in password change. A wrong current password is a 400, never a
+   * 401, because the app signs the partner out on 401.
+   */
+  async changePassword(userId: string, sessionId: string | undefined, dto: ChangeStaffPasswordDto) {
+    const user = await this.prisma.staffUser.findUnique({ where: { id: userId } });
+    if (!user) throw new UnauthorizedException();
+
+    if (!(await this.verifyPassword(user, dto.currentPassword))) {
+      throw new BadRequestException({
+        message: 'Your current password is not correct',
+        code: 'INVALID_CURRENT_PASSWORD',
+      });
+    }
+
+    if (dto.currentPassword === dto.newPassword) {
+      throw new BadRequestException({
+        message: 'Choose a password different from your current one',
+        code: 'SAME_PASSWORD',
+      });
+    }
+
+    const passwordHash = await bcrypt.hash(dto.newPassword, 10);
+    await this.prisma.$transaction([
+      this.prisma.staffUser.update({ where: { id: userId }, data: { passwordHash } }),
+      // Every other device is signed out; this one stays signed in.
+      this.prisma.staffSession.updateMany({
+        where: {
+          staffUserId: userId,
+          revokedAt: null,
+          ...(sessionId ? { id: { not: sessionId } } : {}),
+        },
+        data: { revokedAt: new Date() },
+      }),
+    ]);
+
+    return { message: 'Password changed' };
   }
 
   /**
@@ -137,8 +366,7 @@ export class StaffService {
       });
     }
 
-    const { passwordHash: _, ...safeStaffUser } = staffUser;
-    return safeStaffUser;
+    return this.withoutSecrets(staffUser);
   }
 
   // One-time bootstrap for your very first admin. Once any ADMIN exists,
@@ -186,8 +414,20 @@ export class StaffService {
       throw new UnauthorizedException();
     }
 
-    const { passwordHash, ...safe } = staffUser;
+    return this.withoutSecrets(staffUser);
+  }
 
+  // Never send password, reset or lockout fields to a client.
+  private withoutSecrets<T extends Record<string, any>>(user: T) {
+    const {
+      passwordHash,
+      resetCodeHash,
+      resetExpiresAt,
+      resetAttempts,
+      failedLoginAttempts,
+      lockedUntil,
+      ...safe
+    } = user;
     return safe;
   }
 

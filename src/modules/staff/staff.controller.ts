@@ -4,6 +4,9 @@ import { StaffService } from './staff.service';
 import { LoginStaffDto } from './dto/login-staff.dto';
 import { CreateStaffDto } from './dto/create-staff.dto';
 import { BootstrapAdminDto } from './dto/bootstrap-admin.dto';
+import { ForgotStaffPasswordDto } from './dto/forgot-staff-password.dto';
+import { ResetStaffPasswordDto } from './dto/reset-staff-password.dto';
+import { ChangeStaffPasswordDto } from './dto/change-staff-password.dto';
 import { RefreshTokenDto } from './dto/refresh-token.dto';
 import { SetStaffActiveDto } from './dto/set-staff-active.dto';
 import { JwtAuthGuard } from '../../shared/guards/jwt-auth.guard';
@@ -34,6 +37,28 @@ export class StaffController {
   @Post('refresh')
   refresh(@Body() dto: RefreshTokenDto) {
     return this.staffService.refresh(dto.refreshToken);
+  }
+
+  @Throttle({ default: { limit: 3, ttl: 60_000 } })
+  @Post('password/forgot')
+  forgotPassword(@Body() dto: ForgotStaffPasswordDto) {
+    return this.staffService.forgotPassword(dto);
+  }
+
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
+  @Post('password/reset')
+  resetPassword(@Body() dto: ResetStaffPasswordDto) {
+    return this.staffService.resetPassword(dto);
+  }
+
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
+  @UseGuards(JwtAuthGuard)
+  @Post('password/change')
+  changePassword(
+    @CurrentUser() user: { userId: string; sessionId?: string },
+    @Body() dto: ChangeStaffPasswordDto,
+  ) {
+    return this.staffService.changePassword(user.userId, user.sessionId, dto);
   }
 
   @UseGuards(JwtAuthGuard)
