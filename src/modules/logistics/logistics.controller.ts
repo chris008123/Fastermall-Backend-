@@ -6,9 +6,11 @@ import {
   Patch,
   Post,
   UseGuards,
+  UseInterceptors,
 } from '@nestjs/common';
 
 import { LogisticsService } from './logistics.service';
+import { IdempotencyInterceptor } from '../../shared/interceptors/idempotency.interceptor';
 
 import { UpdatePartnerStatusDto } from './dto/update-partner-status.dto';
 import { UpdateDeliveryStatusDto } from './dto/update-delivery-status.dto';
@@ -43,6 +45,7 @@ export class LogisticsController {
    * Claim a delivery. `accept` is the name the partner app uses; both
    * routes do exactly the same thing.
    */
+  @UseInterceptors(IdempotencyInterceptor)
   @Post('deliveries/:id/accept')
   accept(
     @Param('id') id: string,
@@ -51,6 +54,7 @@ export class LogisticsController {
     return this.logisticsService.claim(id, user.userId, user.role);
   }
 
+  @UseInterceptors(IdempotencyInterceptor)
   @Post('deliveries/:id/claim')
   claim(
     @Param('id') id: string,
@@ -63,6 +67,7 @@ export class LogisticsController {
     );
   }
 
+  @UseInterceptors(IdempotencyInterceptor)
   @Post('deliveries/:id/verify-code')
   verifyDeliveryCode(
     @Param('id') id: string,
@@ -83,6 +88,7 @@ export class LogisticsController {
    * the service can verify that the delivery belongs to
    * that delivery partner.
    */
+  @UseInterceptors(IdempotencyInterceptor)
   @Patch('deliveries/:id/status')
   updateStatus(
     @Param('id') id: string,
