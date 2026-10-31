@@ -361,7 +361,7 @@ export class StaffService {
       // A disabled partner is taken offline and stops getting any pushes.
       await this.prisma.deliveryPartnerProfile.updateMany({
         where: { staffUserId },
-        data: { isAvailable: false },
+        data: { isAvailable: false, currentLat: null, currentLng: null, locationAt: null, locationAccuracyM: null },
       });
       await this.prisma.device.deleteMany({ where: { staffUserId } });
     }
