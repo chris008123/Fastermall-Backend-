@@ -220,11 +220,13 @@ export class StaffService {
           lockedUntil: null,
         },
       }),
-      // Anyone signed in with the old password is signed out.
+      // Anyone signed in with the old password is signed out, and those
+      // phones stop getting pushes.
       this.prisma.staffSession.updateMany({
         where: { staffUserId: user.id, revokedAt: null },
         data: { revokedAt: new Date() },
       }),
+      this.prisma.device.deleteMany({ where: { staffUserId: user.id } }),
     ]);
 
     return { message: 'Password updated. You can now sign in.' };
@@ -326,12 +328,16 @@ export class StaffService {
   }
 
   /** Ends the session the request was made with (this device only). */
-  async logout(sessionId?: string) {
+  async logout(sessionId?: string, userId?: string, pushToken?: string) {
     if (sessionId) {
       await this.prisma.staffSession.updateMany({
         where: { id: sessionId, revokedAt: null },
         data: { revokedAt: new Date() },
       });
+    }
+    // This phone stops getting the account's pushes.
+    if (userId && pushToken) {
+      await this.prisma.device.deleteMany({ where: { token: pushToken, staffUserId: userId } });
     }
     return { loggedOut: true };
   }
@@ -352,6 +358,12 @@ export class StaffService {
         where: { staffUserId, revokedAt: null },
         data: { revokedAt: new Date() },
       });
+      // A disabled partner is taken offline and stops getting any pushes.
+      await this.prisma.deliveryPartnerProfile.updateMany({
+        where: { staffUserId },
+        data: { isAvailable: false },
+      });
+      await this.prisma.device.deleteMany({ where: { staffUserId } });
     }
 
     return { id: staffUserId, isActive };

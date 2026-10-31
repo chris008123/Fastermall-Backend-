@@ -7,6 +7,7 @@ import { BootstrapAdminDto } from './dto/bootstrap-admin.dto';
 import { ForgotStaffPasswordDto } from './dto/forgot-staff-password.dto';
 import { ResetStaffPasswordDto } from './dto/reset-staff-password.dto';
 import { ChangeStaffPasswordDto } from './dto/change-staff-password.dto';
+import { LogoutDto } from './dto/logout.dto';
 import { RefreshTokenDto } from './dto/refresh-token.dto';
 import { SetStaffActiveDto } from './dto/set-staff-active.dto';
 import { JwtAuthGuard } from '../../shared/guards/jwt-auth.guard';
@@ -63,8 +64,8 @@ export class StaffController {
 
   @UseGuards(JwtAuthGuard)
   @Post('logout')
-  logout(@CurrentUser() user: { sessionId?: string }) {
-    return this.staffService.logout(user.sessionId);
+  logout(@CurrentUser() user: { userId: string; sessionId?: string }, @Body() dto: LogoutDto) {
+    return this.staffService.logout(user.sessionId, user.userId, dto?.pushToken);
   }
 
   @UseGuards(JwtAuthGuard)
