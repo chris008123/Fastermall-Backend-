@@ -1,5 +1,10 @@
 export default () => ({
   port: parseInt(process.env.PORT || '3000', 10),
+  wallet: {
+    currency: 'GHS',
+    minCashOutPesewas: parseInt(process.env.CASH_OUT_MIN_PESEWAS || '1000', 10),
+    cashOutFeePesewas: parseInt(process.env.CASH_OUT_FEE_PESEWAS || '0', 10),
+  },
   jwt: {
     secret: process.env.JWT_SECRET,
     expiresIn: process.env.JWT_EXPIRES_IN || '7d',
