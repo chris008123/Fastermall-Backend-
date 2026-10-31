@@ -41,13 +41,31 @@ model StaffUser {
   fullName        String
   role            StaffRole
   isVerified      Boolean                 @default(false)
+  isActive        Boolean                 @default(true)
   createdAt       DateTime                @default(now())
   updatedAt       DateTime                @updatedAt
+  sessions        StaffSession[]
   deliveryProfile DeliveryPartnerProfile?
   notifications   Notification[]
   devices         Device[]
 
   @@map("staff_users")
+}
+
+// One row per signed-in device. The access token carries this id (`sid`), so
+// logging out or disabling the account ends the session straight away.
+model StaffSession {
+  id               String    @id @default(uuid())
+  staffUserId      String
+  refreshTokenHash String    @unique
+  expiresAt        DateTime
+  revokedAt        DateTime?
+  createdAt        DateTime  @default(now())
+  lastUsedAt       DateTime?
+  staffUser        StaffUser @relation(fields: [staffUserId], references: [id], onDelete: Cascade)
+
+  @@index([staffUserId])
+  @@map("staff_sessions")
 }
 
 model DeliveryPartnerProfile {
