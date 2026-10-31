@@ -32,10 +32,25 @@ const WALKING_MAX_DISTANCE_KM = 2;
 const MAX_CODE_ATTEMPTS = 5;
 const CODE_LOCK_MS = 5 * 60 * 1000;
 
-const NEXT_STATUS: Partial<Record<DeliveryStatus, DeliveryStatus>> = {
-  [DeliveryStatus.EN_ROUTE_TO_PICKUP]: DeliveryStatus.PICKED_UP,
-  [DeliveryStatus.PICKED_UP]: DeliveryStatus.EN_ROUTE_TO_CUSTOMER,
+// Where a delivery may go next. PAY_VENDOR (paying the restaurant or shop) is
+// optional: a partner may go straight from heading to the vendor to picked up,
+// which keeps older app versions working. DELIVERED is not here on purpose:
+// it is only reached by verifying the customer's handover code.
+const NEXT_STATUS: Partial<Record<DeliveryStatus, DeliveryStatus[]>> = {
+  [DeliveryStatus.EN_ROUTE_TO_PICKUP]: [DeliveryStatus.PAY_VENDOR, DeliveryStatus.PICKED_UP],
+  [DeliveryStatus.PAY_VENDOR]: [DeliveryStatus.PICKED_UP],
+  [DeliveryStatus.PICKED_UP]: [DeliveryStatus.EN_ROUTE_TO_CUSTOMER],
 };
+
+// Fields that must never reach a partner's phone. The handover code is only
+// stored as a hash, and a 6-digit code's hash can be cracked in seconds, so
+// leaking it would let a partner "deliver" without the customer.
+const SECRET_DELIVERY_FIELDS = [
+  'deliveryCodeHash',
+  'deliveryCodeEncrypted',
+  'deliveryCodeAttempts',
+  'deliveryCodeLockedUntil',
+] as const;
 
 @Injectable()
 export class LogisticsService {
@@ -46,16 +61,57 @@ export class LogisticsService {
 
   // The app's timeline wants [{ stage, at }]. Built from the status events,
   // oldest first. `statusEvents` is left in place for older clients.
+  private publicDelivery<T extends Record<string, any>>(delivery: T) {
+    const copy: Record<string, any> = { ...delivery };
+    for (const field of SECRET_DELIVERY_FIELDS) delete copy[field];
+    return copy as Omit<T, (typeof SECRET_DELIVERY_FIELDS)[number]>;
+  }
+
   private withStageHistory<T extends { statusEvents?: { status: DeliveryStatus; createdAt: Date }[] }>(
     delivery: T,
   ) {
     return {
-      ...delivery,
+      ...this.publicDelivery(delivery),
       stageHistory: (delivery.statusEvents ?? []).map((e) => ({
         stage: e.status,
         at: e.createdAt,
       })),
     };
+  }
+
+  /**
+   * One delivery, with its stage history. An admin can open any delivery (for
+   * support). A partner can open their own, or a food job that is still
+   * waiting to be taken (so tapping a "new delivery" push can open it).
+   * Anything else answers "not found", so ids cannot be probed.
+   */
+  async findOne(id: string, userId: string, role?: string) {
+    const delivery = await this.prisma.delivery.findUnique({
+      where: { id },
+      include: {
+        order: {
+          include: {
+            customer: { select: { id: true, fullName: true } },
+            items: { include: { menuItem: true, product: true } },
+          },
+        },
+        laundryOrder: true,
+        partner: { select: { id: true, staffUserId: true } },
+        statusEvents: { orderBy: { createdAt: 'asc' } },
+      },
+    });
+    if (!delivery) throw new NotFoundException('Delivery not found');
+
+    if (role !== StaffRole.ADMIN) {
+      const mine = delivery.partner?.staffUserId === userId;
+      const open =
+        !delivery.partnerId &&
+        delivery.status === DeliveryStatus.ASSIGNED &&
+        delivery.order?.type === OrderType.FOOD;
+      if (!mine && !open) throw new NotFoundException('Delivery not found');
+    }
+
+    return this.withStageHistory(delivery);
   }
 
   /**
@@ -210,7 +266,8 @@ export class LogisticsService {
     });
 
     // No paging asked for: the plain array the app already understands.
-    return query.limit || query.cursor ? toPage(rows, query.limit ?? 20) : rows;
+    const safe = rows.map((d) => this.publicDelivery(d));
+    return query.limit || query.cursor ? toPage(safe, query.limit ?? 20) : safe;
   }
 
   /**
@@ -560,7 +617,7 @@ export class LogisticsService {
       delivery.order?.customerId ?? delivery.laundryOrder?.customerId,
     );
 
-    return verified;
+    return this.publicDelivery(verified);
   }
 
   /**
@@ -611,13 +668,16 @@ export class LogisticsService {
 
     // A repeated tap (slow network, double press) is not an error.
     if (delivery.status === dto.status) {
-      return delivery;
+      return this.publicDelivery(delivery);
     }
 
-    if (NEXT_STATUS[delivery.status] !== dto.status) {
-      throw new BadRequestException(
-        `Cannot change a delivery from ${delivery.status} to ${dto.status}`,
-      );
+    const allowed = NEXT_STATUS[delivery.status] ?? [];
+    if (!allowed.includes(dto.status)) {
+      throw new BadRequestException({
+        message: `Cannot change a delivery from ${delivery.status} to ${dto.status}`,
+        code: 'INVALID_STAGE_TRANSITION',
+        allowed,
+      });
     }
 
     const orderStatusMap: Partial<
@@ -651,9 +711,10 @@ export class LogisticsService {
           });
 
           if (moved.count === 0) {
-            throw new BadRequestException(
-              'Delivery status has changed. Refresh and try again.',
-            );
+            throw new ConflictException({
+              message: 'Delivery status has changed. Refresh and try again.',
+              code: 'DELIVERY_STATE_CHANGED',
+            });
           }
 
           await tx.deliveryStatusEvent.create({
