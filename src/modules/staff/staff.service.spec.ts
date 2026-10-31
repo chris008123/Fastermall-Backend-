@@ -19,6 +19,8 @@ describe('StaffService — sessions', () => {
   beforeEach(() => {
     prisma = {
       staffUser: { findUnique: jest.fn().mockResolvedValue(user), update: jest.fn().mockResolvedValue({ failedLoginAttempts: 1, resetAttempts: 1 }) },
+      device: { deleteMany: jest.fn().mockResolvedValue({ count: 1 }) },
+      deliveryPartnerProfile: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
       $transaction: jest.fn().mockImplementation((ops: any[]) => Promise.all(ops)),
       staffSession: {
         create: jest.fn().mockImplementation(({ data }) => Promise.resolve({ id: 'sess-new', ...data })),
@@ -113,6 +115,22 @@ describe('StaffService — sessions', () => {
       await svc.setActive('u1', false, 'admin1');
       expect(prisma.staffUser.update).toHaveBeenCalledWith({ where: { id: 'u1' }, data: { isActive: false } });
       expect(prisma.staffSession.updateMany).toHaveBeenCalledWith(expect.objectContaining({ where: { staffUserId: 'u1', revokedAt: null } }));
+    });
+
+    it('disabling also takes the partner offline and removes their push tokens', async () => {
+      await svc.setActive('u1', false, 'admin1');
+      expect(prisma.deliveryPartnerProfile.updateMany).toHaveBeenCalledWith({ where: { staffUserId: 'u1' }, data: { isAvailable: false } });
+      expect(prisma.device.deleteMany).toHaveBeenCalledWith({ where: { staffUserId: 'u1' } });
+    });
+
+    it('logout removes this phone\'s push token, only for this account', async () => {
+      await svc.logout('s1', 'u1', 'ExponentPushToken[abc]');
+      expect(prisma.device.deleteMany).toHaveBeenCalledWith({ where: { token: 'ExponentPushToken[abc]', staffUserId: 'u1' } });
+    });
+
+    it('logout without a token touches no devices', async () => {
+      await svc.logout('s1', 'u1');
+      expect(prisma.device.deleteMany).not.toHaveBeenCalled();
     });
 
     it('re-enabling does not touch sessions', async () => {
@@ -215,6 +233,7 @@ describe('StaffService — sessions', () => {
         expect(await bcrypt.compare('brand-new-pw', data.passwordHash)).toBe(true);
         expect(data).toMatchObject({ resetCodeHash: null, resetExpiresAt: null, failedLoginAttempts: 0, lockedUntil: null });
         expect(prisma.staffSession.updateMany).toHaveBeenCalledWith(expect.objectContaining({ where: { staffUserId: 'u1', revokedAt: null } }));
+        expect(prisma.device.deleteMany).toHaveBeenCalledWith({ where: { staffUserId: 'u1' } });
       });
 
       it('rejects a wrong code with the generic error and counts the try', async () => {
