@@ -1,5 +1,13 @@
 export default () => ({
   port: parseInt(process.env.PORT || '3000', 10),
+  presence: {
+    // OFF by default. Turn on (PARTNER_AUTO_OFFLINE=true) only once the app
+    // sends location or heartbeat updates, or partners are taken offline
+    // after the timeout even though they are still working.
+    autoOffline: process.env.PARTNER_AUTO_OFFLINE === 'true',
+    offlineAfterSeconds: parseInt(process.env.PARTNER_OFFLINE_AFTER_SECONDS || '180', 10),
+    updateEverySeconds: 60,
+  },
   wallet: {
     currency: 'GHS',
     minCashOutPesewas: parseInt(process.env.CASH_OUT_MIN_PESEWAS || '1000', 10),
