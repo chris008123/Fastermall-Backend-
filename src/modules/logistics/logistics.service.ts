@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   NotFoundException,
@@ -25,6 +26,10 @@ const WALKING_MAX_DISTANCE_KM = 2;
 // Claiming sets EN_ROUTE_TO_PICKUP, and DELIVERED only comes from verify-code,
 // so neither appears as a target here. Anything not listed (skipping a step,
 // going backwards, touching a DELIVERED or FAILED job) is rejected.
+// Wrong handover-code guesses allowed before the job locks for a few minutes.
+const MAX_CODE_ATTEMPTS = 5;
+const CODE_LOCK_MS = 5 * 60 * 1000;
+
 const NEXT_STATUS: Partial<Record<DeliveryStatus, DeliveryStatus>> = {
   [DeliveryStatus.EN_ROUTE_TO_PICKUP]: DeliveryStatus.PICKED_UP,
   [DeliveryStatus.PICKED_UP]: DeliveryStatus.EN_ROUTE_TO_CUSTOMER,
@@ -207,29 +212,43 @@ export class LogisticsService {
       );
     }
 
-    if (delivery.partnerId) {
-      throw new BadRequestException(
-        'This delivery has already been claimed',
-      );
-    }
-
-    if (delivery.status !== DeliveryStatus.ASSIGNED) {
-      throw new BadRequestException(
-        'This delivery is no longer available',
-      );
+    if (
+      delivery.partnerId ||
+      delivery.status !== DeliveryStatus.ASSIGNED
+    ) {
+      throw new ConflictException({
+        message: 'This delivery has already been taken',
+        code: 'JOB_ALREADY_TAKEN',
+      });
     }
 
     const claimed = await this.prisma.$transaction(
       async (tx) => {
+        // Claim only if it is still free. Two partners tapping Accept at the
+        // same moment: exactly one update matches, the other gets a 409.
+        const taken = await tx.delivery.updateMany({
+          where: {
+            id: deliveryId,
+            partnerId: null,
+            status: DeliveryStatus.ASSIGNED,
+          },
+          data: {
+            partnerId: profile.id,
+            status: DeliveryStatus.EN_ROUTE_TO_PICKUP,
+          },
+        });
+
+        if (taken.count === 0) {
+          throw new ConflictException({
+            message: 'This delivery has already been taken',
+            code: 'JOB_ALREADY_TAKEN',
+          });
+        }
+
         const updated =
-          await tx.delivery.update({
+          await tx.delivery.findUniqueOrThrow({
             where: {
               id: deliveryId,
-            },
-            data: {
-              partnerId: profile.id,
-              status:
-                DeliveryStatus.EN_ROUTE_TO_PICKUP,
             },
             include: {
               order: {
@@ -318,7 +337,7 @@ export class LogisticsService {
     }
 
     if (delivery.partnerId !== profile.id) {
-      throw new BadRequestException(
+      throw new ForbiddenException(
         'You are not assigned to this delivery',
       );
     }
@@ -329,12 +348,14 @@ export class LogisticsService {
       );
     }
 
+    // The code is only checked at the customer, after pickup. This stops a
+    // partner marking a job delivered straight after accepting it.
     if (
-      delivery.deliveryCodeLockedUntil &&
-      delivery.deliveryCodeLockedUntil > new Date()
+      delivery.status !== DeliveryStatus.PICKED_UP &&
+      delivery.status !== DeliveryStatus.EN_ROUTE_TO_CUSTOMER
     ) {
       throw new BadRequestException(
-        'Delivery code verification is temporarily locked',
+        `Cannot verify the code while the delivery is ${delivery.status}`,
       );
     }
 
@@ -344,47 +365,100 @@ export class LogisticsService {
       );
     }
 
+    const now = new Date();
+
+    if (
+      delivery.deliveryCodeLockedUntil &&
+      delivery.deliveryCodeLockedUntil > now
+    ) {
+      throw new BadRequestException(
+        'Delivery code verification is temporarily locked',
+      );
+    }
+
+    // A lock that has run out starts a fresh set of attempts.
+    if (delivery.deliveryCodeLockedUntil) {
+      await this.prisma.delivery.updateMany({
+        where: {
+          id: deliveryId,
+          deliveryCodeLockedUntil: { lte: now },
+        },
+        data: {
+          deliveryCodeAttempts: 0,
+          deliveryCodeLockedUntil: null,
+        },
+      });
+    }
+
+    // Count the attempt BEFORE comparing, in one atomic step, so many
+    // guesses sent at once cannot all slip past the limit.
+    const { deliveryCodeAttempts: attempts } =
+      await this.prisma.delivery.update({
+        where: { id: deliveryId },
+        data: { deliveryCodeAttempts: { increment: 1 } },
+        select: { deliveryCodeAttempts: true },
+      });
+
+    if (attempts > MAX_CODE_ATTEMPTS) {
+      await this.prisma.delivery.update({
+        where: { id: deliveryId },
+        data: {
+          deliveryCodeLockedUntil: new Date(Date.now() + CODE_LOCK_MS),
+        },
+      });
+      throw new BadRequestException(
+        'Too many incorrect attempts. Try again in 5 minutes.',
+      );
+    }
+
     const valid = await bcrypt.compare(
       code,
       delivery.deliveryCodeHash,
     );
 
     if (!valid) {
-      const attempts =
-        delivery.deliveryCodeAttempts + 1;
-
-      await this.prisma.delivery.update({
-        where: {
-          id: deliveryId,
-        },
-        data: {
-          deliveryCodeAttempts: attempts,
-          deliveryCodeLockedUntil:
-            attempts >= 5
-              ? new Date(Date.now() + 5 * 60 * 1000)
-              : null,
-        },
-      });
-
-      throw new BadRequestException(
-        attempts >= 5
-          ? 'Too many incorrect attempts. Try again in 5 minutes.'
-          : 'Invalid delivery code',
-      );
+      if (attempts >= MAX_CODE_ATTEMPTS) {
+        await this.prisma.delivery.update({
+          where: { id: deliveryId },
+          data: {
+            deliveryCodeLockedUntil: new Date(Date.now() + CODE_LOCK_MS),
+          },
+        });
+        throw new BadRequestException(
+          'Too many incorrect attempts. Try again in 5 minutes.',
+        );
+      }
+      throw new BadRequestException('Invalid delivery code');
     }
 
     const verified = await this.prisma.$transaction(
       async (tx) => {
+        // Only the first successful verification wins; a repeat or a
+        // parallel request matches nothing and gets a 409.
+        const done = await tx.delivery.updateMany({
+          where: {
+            id: deliveryId,
+            partnerId: profile.id,
+            deliveryCodeUsed: false,
+          },
+          data: {
+            status: DeliveryStatus.DELIVERED,
+            deliveryCodeUsed: true,
+            deliveryCodeAttempts: 0,
+            verifiedAt: new Date(),
+          },
+        });
+
+        if (done.count === 0) {
+          throw new ConflictException({
+            message: 'This delivery was already completed',
+            code: 'JOB_ALREADY_COMPLETED',
+          });
+        }
+
         const updated =
-          await tx.delivery.update({
-            where: {
-              id: deliveryId,
-            },
-            data: {
-              status: DeliveryStatus.DELIVERED,
-              deliveryCodeUsed: true,
-              verifiedAt: new Date(),
-            },
+          await tx.delivery.findUniqueOrThrow({
+            where: { id: deliveryId },
           });
 
         if (delivery.orderId) {
@@ -477,7 +551,7 @@ export class LogisticsService {
       }
 
       if (delivery.partnerId !== profile.id) {
-        throw new BadRequestException(
+        throw new ForbiddenException(
           'You are not assigned to this delivery',
         );
       }
