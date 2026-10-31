@@ -4,15 +4,16 @@ import { HttpExceptionFilter } from './http-exception.filter';
 
 function run(exception: unknown) {
   const json = jest.fn();
+  const setHeader = jest.fn();
   const status = jest.fn().mockReturnValue({ json });
   const host: any = {
     switchToHttp: () => ({
-      getResponse: () => ({ status }),
+      getResponse: () => ({ status, setHeader }),
       getRequest: () => ({ method: 'POST', url: '/api/v1/x', requestId: 'req-12345678' }),
     }),
   };
   new HttpExceptionFilter().catch(exception, host);
-  return { status: status.mock.calls[0][0], body: json.mock.calls[0][0] };
+  return { status: status.mock.calls[0][0], body: json.mock.calls[0][0], setHeader };
 }
 
 describe('HttpExceptionFilter', () => {
@@ -37,6 +38,13 @@ describe('HttpExceptionFilter', () => {
       { field: 'number', message: 'number must be 10 digits' },
       { field: 'email', message: 'email must be an email' },
     ]);
+  });
+
+  it('sets Retry-After when the error carries retryAfterSeconds', () => {
+    const { status, setHeader, body } = run(new HttpException({ message: 'Locked', code: 'ACCOUNT_LOCKED', retryAfterSeconds: 900 }, 429));
+    expect(status).toBe(429);
+    expect(setHeader).toHaveBeenCalledWith('Retry-After', '900');
+    expect(body.code).toBe('ACCOUNT_LOCKED');
   });
 
   it('hides internals on unexpected errors', () => {

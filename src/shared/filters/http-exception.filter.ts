@@ -59,6 +59,7 @@ export class HttpExceptionFilter implements ExceptionFilter {
 
     let message = 'Unexpected error';
     let code: string | undefined;
+    let retryAfterSeconds: number | undefined;
     let errors: { field?: string; message: string }[] | undefined;
 
     if (typeof raw === 'string') {
@@ -73,6 +74,8 @@ export class HttpExceptionFilter implements ExceptionFilter {
         message = body.message;
       }
       if (typeof body.code === 'string') code = body.code;
+      const retry = (body as { retryAfterSeconds?: unknown }).retryAfterSeconds;
+      if (typeof retry === 'number') retryAfterSeconds = retry;
     }
 
     // Never leak internals for unexpected errors.
@@ -84,6 +87,8 @@ export class HttpExceptionFilter implements ExceptionFilter {
       `[${requestId ?? '-'}] ${request.method} ${request.url} -> ${status} ${code}`,
       exception instanceof Error ? exception.stack : undefined,
     );
+
+    if (retryAfterSeconds) response.setHeader('Retry-After', String(retryAfterSeconds));
 
     response.status(status).json({
       success: false,
