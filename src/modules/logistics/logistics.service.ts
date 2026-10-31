@@ -42,6 +42,50 @@ export class LogisticsService {
     private readonly events: EventEmitter2,
   ) {}
 
+  // The app's timeline wants [{ stage, at }]. Built from the status events,
+  // oldest first. `statusEvents` is left in place for older clients.
+  private withStageHistory<T extends { statusEvents?: { status: DeliveryStatus; createdAt: Date }[] }>(
+    delivery: T,
+  ) {
+    return {
+      ...delivery,
+      stageHistory: (delivery.statusEvents ?? []).map((e) => ({
+        stage: e.status,
+        at: e.createdAt,
+      })),
+    };
+  }
+
+  /**
+   * The signed-in partner's own profile (used by the app on start-up and for
+   * the online switch).
+   */
+  async getMyProfile(userId: string) {
+    const profile =
+      await this.prisma.deliveryPartnerProfile.findUnique({
+        where: { staffUserId: userId },
+        include: {
+          staffUser: {
+            select: {
+              id: true,
+              fullName: true,
+              email: true,
+              phone: true,
+              role: true,
+            },
+          },
+        },
+      });
+
+    if (!profile) {
+      throw new NotFoundException(
+        'You are not registered as a delivery partner',
+      );
+    }
+
+    return profile;
+  }
+
   // Tells Notifications that a delivery moved forward, so the customer can be
   // pushed. Called after the database transaction has committed.
   private emitStatusUpdated(
@@ -268,6 +312,9 @@ export class LogisticsService {
                 },
               },
               laundryOrder: true,
+              statusEvents: {
+                orderBy: { createdAt: 'asc' },
+              },
             },
           });
 
@@ -298,7 +345,7 @@ export class LogisticsService {
       claimed.order?.customer?.id ?? claimed.laundryOrder?.customerId,
     );
 
-    return claimed;
+    return this.withStageHistory(claimed);
   }
 
   async verifyDeliveryCode(
@@ -663,7 +710,7 @@ export class LogisticsService {
       result.order?.customer?.id ?? result.laundryOrder?.customerId,
     );
 
-    return result;
+    return this.withStageHistory(result);
   }
 
   /**
@@ -715,7 +762,7 @@ export class LogisticsService {
       );
     }
 
-    return this.prisma.delivery.findMany({
+    const deliveries = await this.prisma.delivery.findMany({
       where: {
         partnerId: profile.id,
       },
@@ -745,6 +792,8 @@ export class LogisticsService {
         createdAt: 'desc',
       },
     });
+
+    return deliveries.map((d) => this.withStageHistory(d));
   }
 
   /**

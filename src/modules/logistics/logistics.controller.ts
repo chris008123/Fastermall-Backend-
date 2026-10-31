@@ -40,8 +40,17 @@ export class LogisticsController {
   }
 
   /**
-   * Claim a delivery.
+   * Claim a delivery. `accept` is the name the partner app uses; both
+   * routes do exactly the same thing.
    */
+  @Post('deliveries/:id/accept')
+  accept(
+    @Param('id') id: string,
+    @CurrentUser() user: { userId: string; role: string },
+  ) {
+    return this.logisticsService.claim(id, user.userId, user.role);
+  }
+
   @Post('deliveries/:id/claim')
   claim(
     @Param('id') id: string,
@@ -85,6 +94,14 @@ export class LogisticsController {
       dto,
       user.userId,
     );
+  }
+
+  /**
+   * The signed-in partner's profile.
+   */
+  @Get('me')
+  me(@CurrentUser() user: { userId: string }) {
+    return this.logisticsService.getMyProfile(user.userId);
   }
 
   /**
