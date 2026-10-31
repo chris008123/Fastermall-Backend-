@@ -263,4 +263,75 @@ describe('LogisticsService — food-only rule for delivery partners', () => {
       expect(d.stageHistory).toEqual([{ stage: 'PICKED_UP', at }]);
     });
   });
+
+  describe('delivery lists: filter, paging, updatedSince', () => {
+    const at = (m: number) => new Date(Date.UTC(2026, 9, 24, 12, m));
+    const row = (id: string, m: number) => ({ id, createdAt: at(m), statusEvents: [] });
+
+    beforeEach(() => {
+      prisma.deliveryPartnerProfile.findUnique.mockResolvedValue({ id: 'p1' });
+    });
+
+    it('keeps answering with a plain array when no paging is asked for', async () => {
+      prisma.delivery.findMany.mockResolvedValue([row('d1', 5)]);
+      const out: any = await svc.myDeliveries('s1');
+      expect(Array.isArray(out)).toBe(true);
+      expect(prisma.delivery.findMany.mock.calls.at(-1)[0].take).toBeUndefined();
+    });
+
+    it('filters by one or several statuses', async () => {
+      prisma.delivery.findMany.mockResolvedValue([]);
+      await svc.myDeliveries('s1', { status: ['DELIVERED'] as any });
+      expect(prisma.delivery.findMany.mock.calls.at(-1)[0].where).toMatchObject({ partnerId: 'p1', status: { in: ['DELIVERED'] } });
+    });
+
+    it('returns only jobs changed after updatedSince', async () => {
+      prisma.delivery.findMany.mockResolvedValue([]);
+      await svc.myDeliveries('s1', { updatedSince: '2026-10-24T14:00:00.000Z' });
+      expect(prisma.delivery.findMany.mock.calls.at(-1)[0].where.updatedAt).toEqual({ gt: new Date('2026-10-24T14:00:00.000Z') });
+    });
+
+    it('returns a page with a cursor when there is more, fetching one extra row', async () => {
+      prisma.delivery.findMany.mockResolvedValue([row('d3', 30), row('d2', 20), row('d1', 10)]);
+      const page: any = await svc.myDeliveries('s1', { limit: 2 });
+      expect(prisma.delivery.findMany.mock.calls.at(-1)[0].take).toBe(3);
+      expect(page.items.map((d: any) => d.id)).toEqual(['d3', 'd2']);
+      expect(page.nextCursor).toEqual(expect.any(String));
+      expect(page.items[0].stageHistory).toEqual([]);
+    });
+
+    it('has no cursor on the last page, and continues after a cursor', async () => {
+      prisma.delivery.findMany.mockResolvedValue([row('d1', 10)]);
+      const last: any = await svc.myDeliveries('s1', { limit: 2 });
+      expect(last.nextCursor).toBeNull();
+
+      const cursor = Buffer.from(`${at(20).toISOString()}|d2`).toString('base64url');
+      await svc.myDeliveries('s1', { limit: 2, cursor });
+      expect(prisma.delivery.findMany.mock.calls.at(-1)[0].where.OR).toEqual([
+        { createdAt: { lt: at(20) } },
+        { createdAt: at(20), id: { lt: 'd2' } },
+      ]);
+    });
+
+    it('rejects a garbage cursor', async () => {
+      await expect(svc.myDeliveries('s1', { cursor: '%%%' })).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it('pages the unassigned list oldest first, and stays an array without paging', async () => {
+      prisma.delivery.findMany.mockResolvedValue([row('d1', 10), row('d2', 20)]);
+      expect(Array.isArray(await svc.findUnassigned('DELIVERY_PARTNER'))).toBe(true);
+
+      const page: any = await svc.findUnassigned('DELIVERY_PARTNER', { limit: 1 });
+      expect(page.items).toHaveLength(1);
+      expect(page.nextCursor).toEqual(expect.any(String));
+      expect(prisma.delivery.findMany.mock.calls.at(-1)[0].orderBy).toEqual([{ createdAt: 'asc' }, { id: 'asc' }]);
+
+      const cursor = Buffer.from(`${at(10).toISOString()}|d1`).toString('base64url');
+      await svc.findUnassigned('DELIVERY_PARTNER', { cursor });
+      expect(prisma.delivery.findMany.mock.calls.at(-1)[0].where.OR).toEqual([
+        { createdAt: { gt: at(10) } },
+        { createdAt: at(10), id: { gt: 'd1' } },
+      ]);
+    });
+  });
 });
