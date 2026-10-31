@@ -109,6 +109,7 @@ model DeliveryPartnerProfile {
   payoutNumber  String?
   // Saved app settings (notifications, delivery, navigation). See PreferencesService.
   preferences   Json?
+  documents     PartnerDocument[]
   createdAt    DateTime            @default(now())
   payouts      PayoutRequest[]
   deliveries   Delivery[]
@@ -331,6 +332,46 @@ model DeliveryStatusEvent {
 
   @@index([deliveryId, createdAt])
   @@map("delivery_status_events")
+}
+
+enum DocumentType {
+  ID_CARD
+  PROFILE_PHOTO
+  DRIVERS_LICENSE
+  VEHICLE_REGISTRATION
+  INSURANCE
+}
+
+enum DocumentStatus {
+  UPLOADING
+  PENDING
+  APPROVED
+  REJECTED
+  SUPERSEDED
+}
+
+// A verification document a partner uploaded (ID, licence...). The file lives
+// in private storage; only its path is stored here, and the path is never sent
+// to the partner app.
+model PartnerDocument {
+  id              String                 @id @default(uuid())
+  partnerId       String
+  type            DocumentType
+  status          DocumentStatus         @default(UPLOADING)
+  storagePath     String
+  contentType     String
+  sizeBytes       Int
+  expiresAt       DateTime?
+  rejectionReason String?
+  reviewedById    String?
+  reviewedAt      DateTime?
+  createdAt       DateTime               @default(now())
+  updatedAt       DateTime               @updatedAt
+  partner         DeliveryPartnerProfile @relation(fields: [partnerId], references: [id])
+
+  @@index([partnerId, type])
+  @@index([status, createdAt])
+  @@map("partner_documents")
 }
 
 enum PayoutStatus {
