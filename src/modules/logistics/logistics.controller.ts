@@ -6,6 +6,7 @@ import {
   Param,
   Patch,
   Post,
+  Put,
   Query,
   Res,
   UseGuards,
@@ -14,6 +15,9 @@ import {
 
 import type { Response } from 'express';
 import { DeliveryListQueryDto } from './dto/delivery-list-query.dto';
+import { Throttle } from '@nestjs/throttler';
+import { PresenceService } from './presence.service';
+import { UpdateLocationDto } from './dto/update-location.dto';
 import { LogisticsService } from './logistics.service';
 import { IdempotencyInterceptor } from '../../shared/interceptors/idempotency.interceptor';
 
@@ -34,6 +38,7 @@ import { VerifyDeliveryCodeDto } from './dto/verify-delivery-code.dto';
 export class LogisticsController {
   constructor(
     private readonly logisticsService: LogisticsService,
+    private readonly presence: PresenceService,
   ) {}
 
   /**
@@ -50,6 +55,7 @@ export class LogisticsController {
     @Res({ passthrough: true }) res: Response,
   ) {
     res.setHeader('X-Server-Time', new Date().toISOString());
+    void this.presence.touch(user.userId); // the app's refresh doubles as a heartbeat
     return this.logisticsService.findUnassigned(user.role, query);
   }
 
@@ -161,7 +167,30 @@ export class LogisticsController {
     @Res({ passthrough: true }) res: Response,
   ) {
     res.setHeader('X-Server-Time', new Date().toISOString());
+    void this.presence.touch(user.userId); // the app's refresh doubles as a heartbeat
     return this.logisticsService.myDeliveries(user.userId, query);
+  }
+
+  /**
+   * Latest position, sent about every 60 seconds while online. Only the
+   * latest position is kept. A partner who is offline gets 409.
+   */
+  @Throttle({ default: { limit: 20, ttl: 60_000 } })
+  @Put('me/location')
+  updateLocation(
+    @CurrentUser() user: { userId: string },
+    @Body() dto: UpdateLocationDto,
+  ) {
+    return this.presence.updateLocation(user.userId, dto);
+  }
+
+  /**
+   * "Still here", for when the app has no location permission.
+   */
+  @Throttle({ default: { limit: 20, ttl: 60_000 } })
+  @Post('me/heartbeat')
+  heartbeat(@CurrentUser() user: { userId: string }) {
+    return this.presence.heartbeat(user.userId);
   }
 
   /**

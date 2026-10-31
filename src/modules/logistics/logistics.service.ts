@@ -1,3 +1,5 @@
+import { maskNumber } from '../../shared/mask';
+import { CLEARED_LOCATION } from './presence.service';
 import { afterCursor, toPage } from '../../shared/pagination/cursor';
 import { DeliveryListQueryDto } from './dto/delivery-list-query.dto';
 import {
@@ -61,6 +63,21 @@ export class LogisticsService {
 
   // The app's timeline wants [{ stage, at }]. Built from the status events,
   // oldest first. `statusEvents` is left in place for older clients.
+  // The partner's own profile. The full payout number never leaves the server;
+  // only a masked copy is shown (the wallet endpoints manage the real one).
+  private publicProfile<T extends { payoutNetwork?: string | null; payoutNumber?: string | null }>(
+    profile: T,
+  ) {
+    const { payoutNetwork, payoutNumber, ...rest } = profile;
+    return {
+      ...rest,
+      payoutDestination:
+        payoutNetwork && payoutNumber
+          ? { network: payoutNetwork, numberMasked: maskNumber(payoutNumber) }
+          : null,
+    };
+  }
+
   private publicDelivery<T extends Record<string, any>>(delivery: T) {
     const copy: Record<string, any> = { ...delivery };
     for (const field of SECRET_DELIVERY_FIELDS) delete copy[field];
@@ -141,7 +158,7 @@ export class LogisticsService {
       );
     }
 
-    return profile;
+    return this.publicProfile(profile);
   }
 
   // Tells Notifications that a delivery moved forward, so the customer can be
@@ -801,12 +818,20 @@ export class LogisticsService {
       );
     }
 
-    return this.prisma.deliveryPartnerProfile.update({
+    // Going online counts as being seen right now; going offline clears the
+    // stored position.
+    const updated = await this.prisma.deliveryPartnerProfile.update({
       where: {
         staffUserId: userId,
       },
-      data: dto,
+      data: {
+        ...dto,
+        ...(dto.isAvailable === true ? { lastSeenAt: new Date() } : {}),
+        ...(dto.isAvailable === false ? CLEARED_LOCATION : {}),
+      },
     });
+
+    return this.publicProfile(updated);
   }
 
   /**
