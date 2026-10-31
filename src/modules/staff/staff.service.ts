@@ -231,6 +231,23 @@ export class StaffService {
   }
 
   /**
+   * Asks a signed-in partner for their password before something sensitive
+   * (like changing the payout destination). Shares the login lockout. A wrong
+   * password is a 400, never a 401, because the app signs out on 401.
+   */
+  async assertCurrentPassword(userId: string, password: string) {
+    const user = await this.prisma.staffUser.findUnique({ where: { id: userId } });
+    if (!user) throw new UnauthorizedException();
+
+    if (!(await this.verifyPassword(user, password))) {
+      throw new BadRequestException({
+        message: 'Your password is not correct',
+        code: 'INVALID_CURRENT_PASSWORD',
+      });
+    }
+  }
+
+  /**
    * Signed-in password change. A wrong current password is a 400, never a
    * 401, because the app signs the partner out on 401.
    */
