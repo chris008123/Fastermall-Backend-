@@ -97,6 +97,11 @@ model DeliveryPartnerProfile {
   isAvailable  Boolean             @default(false)
   currentLat   Float?
   currentLng   Float?
+  // Only the latest position is kept (no trail), and it is cleared when the
+  // partner goes offline. See PresenceService.
+  locationAt        DateTime?
+  locationAccuracyM Float?
+  lastSeenAt        DateTime?
   vehiclePlate String?
   // Where cash-outs are sent (mobile money). Only the masked number is ever
   // returned by the API.
