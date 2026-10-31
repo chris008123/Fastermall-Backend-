@@ -33,8 +33,10 @@ export class LogisticsController {
    * Get deliveries that have not yet been claimed.
    */
   @Get('deliveries/unassigned')
-  findUnassigned() {
-    return this.logisticsService.findUnassigned();
+  findUnassigned(
+    @CurrentUser() user: { userId: string; role: string },
+  ) {
+    return this.logisticsService.findUnassigned(user.role);
   }
 
   /**
@@ -43,11 +45,12 @@ export class LogisticsController {
   @Post('deliveries/:id/claim')
   claim(
     @Param('id') id: string,
-    @CurrentUser() user: { userId: string },
+    @CurrentUser() user: { userId: string; role: string },
   ) {
     return this.logisticsService.claim(
       id,
       user.userId,
+      user.role,
     );
   }
 
