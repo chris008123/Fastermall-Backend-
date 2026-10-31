@@ -419,4 +419,39 @@ describe('LogisticsService — food-only rule for delivery partners', () => {
       await expect(svc.findOne('nope', 'admin1', 'ADMIN')).rejects.toBeInstanceOf(NotFoundException);
     });
   });
+
+  describe('own profile and availability', () => {
+    const profile = { id: 'p1', staffUserId: 's1', isAvailable: false, payoutNetwork: 'MTN', payoutNumber: '0241234567', staffUser: { fullName: 'Ama' } };
+
+    it('shows only a masked payout number, never the full one', async () => {
+      prisma.deliveryPartnerProfile.findUnique.mockResolvedValue(profile);
+      const me: any = await svc.getMyProfile('s1');
+      expect(me.payoutDestination).toEqual({ network: 'MTN', numberMasked: '024****567' });
+      expect(me).not.toHaveProperty('payoutNumber');
+      expect(JSON.stringify(me)).not.toContain('0241234567');
+    });
+
+    it('has a null destination when none is set', async () => {
+      prisma.deliveryPartnerProfile.findUnique.mockResolvedValue({ ...profile, payoutNetwork: null, payoutNumber: null });
+      expect((await svc.getMyProfile('s1') as any).payoutDestination).toBeNull();
+    });
+
+    it('going online records being seen; the answer has no full payout number', async () => {
+      prisma.deliveryPartnerProfile.findUnique.mockResolvedValue(profile);
+      prisma.deliveryPartnerProfile.update = jest.fn().mockResolvedValue({ ...profile, isAvailable: true });
+      const out: any = await svc.updatePartnerStatus('s1', { isAvailable: true });
+      expect(prisma.deliveryPartnerProfile.update.mock.calls[0][0].data.lastSeenAt).toBeInstanceOf(Date);
+      expect(out.isAvailable).toBe(true);
+      expect(out).not.toHaveProperty('payoutNumber');
+    });
+
+    it('going offline clears the stored position', async () => {
+      prisma.deliveryPartnerProfile.findUnique.mockResolvedValue(profile);
+      prisma.deliveryPartnerProfile.update = jest.fn().mockResolvedValue(profile);
+      await svc.updatePartnerStatus('s1', { isAvailable: false });
+      expect(prisma.deliveryPartnerProfile.update.mock.calls[0][0].data).toEqual({
+        isAvailable: false, currentLat: null, currentLng: null, locationAt: null, locationAccuracyM: null,
+      });
+    });
+  });
 });

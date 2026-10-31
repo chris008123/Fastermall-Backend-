@@ -119,7 +119,7 @@ describe('StaffService — sessions', () => {
 
     it('disabling also takes the partner offline and removes their push tokens', async () => {
       await svc.setActive('u1', false, 'admin1');
-      expect(prisma.deliveryPartnerProfile.updateMany).toHaveBeenCalledWith({ where: { staffUserId: 'u1' }, data: { isAvailable: false } });
+      expect(prisma.deliveryPartnerProfile.updateMany).toHaveBeenCalledWith({ where: { staffUserId: 'u1' }, data: { isAvailable: false, currentLat: null, currentLng: null, locationAt: null, locationAccuracyM: null } });
       expect(prisma.device.deleteMany).toHaveBeenCalledWith({ where: { staffUserId: 'u1' } });
     });
 
