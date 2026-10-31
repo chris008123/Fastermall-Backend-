@@ -5,6 +5,9 @@ import { Expo } from 'expo-server-sdk';
 import { PrismaService } from '../../database/prisma.service';
 import { PushService } from './push.service';
 import { RegisterDeviceDto } from './dto/register-device.dto';
+import { NotificationsQueryDto } from './dto/notifications-query.dto';
+import { afterCursor, toPage } from '../../shared/pagination/cursor';
+import { resolvePreferences } from '../logistics/preferences.service';
 
 export interface NotificationUser {
   userId: string;
@@ -168,9 +171,10 @@ export class NotificationsService {
     });
     if (delivery?.order?.type !== 'FOOD') return;
 
+    // Only partners who are online AND whose account is still active.
     const partners = await this.prisma.deliveryPartnerProfile.findMany({
-      where: { isAvailable: true },
-      select: { staffUserId: true },
+      where: { isAvailable: true, staffUser: { isActive: true } },
+      select: { staffUserId: true, preferences: true },
     });
     if (partners.length === 0) return;
 
@@ -178,11 +182,18 @@ export class NotificationsService {
       title: 'New delivery available',
       body: 'A new delivery is waiting to be claimed.',
       type: 'DELIVERY_AVAILABLE',
-      data: { deliveryId: event.deliveryId, orderId: event.orderId, laundryOrderId: event.laundryOrderId },
+      // jobId is the same id as deliveryId; the partner app opens the job with it.
+      data: {
+        deliveryId: event.deliveryId,
+        jobId: event.deliveryId,
+        orderId: event.orderId,
+        laundryOrderId: event.laundryOrderId,
+      },
       channelId: CHANNELS.deliveries,
     };
     const staffUserIds = partners.map((p) => p.staffUserId);
 
+    // Everyone gets the in-app notification...
     await this.safely(() =>
       this.prisma.notification.createMany({
         data: staffUserIds.map((staffUserId) => ({
@@ -194,30 +205,78 @@ export class NotificationsService {
         })),
       }),
     );
-    void this.push.sendToOwners(
-      { staffUserIds },
-      { title: input.title, body: input.body, channelId: input.channelId, data: { type: input.type, ...cleanData(input.data) } },
-    );
+
+    // ...but the push respects each partner's own settings.
+    const loud: string[] = [];
+    const quiet: string[] = [];
+    for (const p of partners) {
+      const { notifications } = resolvePreferences(p.preferences);
+      if (notifications.newJobs === false) continue;
+      (notifications.sound === false ? quiet : loud).push(p.staffUserId);
+    }
+    const payload = {
+      title: input.title,
+      body: input.body,
+      channelId: input.channelId,
+      data: { type: input.type, ...cleanData(input.data) },
+    };
+    if (loud.length) void this.push.sendToOwners({ staffUserIds: loud }, payload);
+    if (quiet.length) void this.push.sendToOwners({ staffUserIds: quiet }, { ...payload, sound: false });
   }
 
   // ───────── Reading ─────────
 
-  findMine(user: NotificationUser) {
-    return this.prisma.notification.findMany({
-      where: this.ownerWhere(user),
-      orderBy: { createdAt: 'desc' },
+  // No paging options: everything, as before. With `limit`/`cursor`: a page,
+  // { items, nextCursor }, newest first.
+  async findMine(user: NotificationUser, query: NotificationsQueryDto = {}) {
+    const rows = await this.prisma.notification.findMany({
+      where: {
+        ...this.ownerWhere(user),
+        ...(query.unread ? { isRead: false } : {}),
+        ...(query.cursor ? afterCursor(query.cursor, 'desc') : {}),
+      },
+      ...(query.limit ? { take: query.limit + 1 } : {}),
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
     });
+    return query.limit || query.cursor ? toPage(rows, query.limit ?? 20) : rows;
   }
 
-  // Only the owner can mark a notification read. Someone else's id answers
+  async unreadCount(user: NotificationUser) {
+    const count = await this.prisma.notification.count({
+      where: { ...this.ownerWhere(user), isRead: false },
+    });
+    return { unread: count };
+  }
+
+  // Only the owner can change a notification. Someone else's id answers
   // "not found", so ids can't be probed.
-  async markRead(id: string, user: NotificationUser) {
+  async setRead(id: string, user: NotificationUser, isRead: boolean) {
     const result = await this.prisma.notification.updateMany({
       where: { id, ...this.ownerWhere(user) },
-      data: { isRead: true },
+      data: { isRead },
     });
     if (result.count === 0) throw new NotFoundException('Notification not found');
     return this.prisma.notification.findUnique({ where: { id } });
+  }
+
+  markRead(id: string, user: NotificationUser) {
+    return this.setRead(id, user, true);
+  }
+
+  async markAllRead(user: NotificationUser) {
+    const result = await this.prisma.notification.updateMany({
+      where: { ...this.ownerWhere(user), isRead: false },
+      data: { isRead: true },
+    });
+    return { updated: result.count };
+  }
+
+  async remove(id: string, user: NotificationUser) {
+    const result = await this.prisma.notification.deleteMany({
+      where: { id, ...this.ownerWhere(user) },
+    });
+    if (result.count === 0) throw new NotFoundException('Notification not found');
+    return { removed: true };
   }
 
   // ───────── Devices (Expo push tokens) ─────────
