@@ -7,6 +7,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { PayoutStatus } from '@prisma/client';
 import { PrismaService } from '../../database/prisma.service';
+import { maskNumber } from '../../shared/mask';
 import { StaffService } from '../staff/staff.service';
 import { afterCursor, encodeCursor } from '../../shared/pagination/cursor';
 import { SetPayoutDestinationDto } from './dto/set-payout-destination.dto';
@@ -15,10 +16,6 @@ import { SetPayoutDestinationDto } from './dto/set-payout-destination.dto';
 export function toPesewas(value: { toString(): string } | number | string | null | undefined): number {
   if (value === null || value === undefined) return 0;
   return Math.round(Number(value.toString()) * 100);
-}
-
-function maskNumber(number: string) {
-  return `${number.slice(0, 3)}****${number.slice(-3)}`;
 }
 
 /**
