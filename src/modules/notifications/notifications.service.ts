@@ -245,6 +245,20 @@ export class NotificationsService {
     });
   }
 
+  // Emitted when support answers a ticket.
+  @OnEvent('support.ticket.replied')
+  async onSupportTicketReplied(event: { ticketId: string; userId?: string; staffUserId?: string; subject: string }) {
+    const input: NotifyInput = {
+      title: 'Support replied',
+      body: `New reply on your request: ${event.subject}`,
+      type: 'SUPPORT_REPLY',
+      data: { ticketId: event.ticketId },
+      channelId: CHANNELS.orders,
+    };
+    if (event.staffUserId) await this.notifyStaff(event.staffUserId, input);
+    else if (event.userId) await this.notifyCustomer(event.userId, input);
+  }
+
   // ───────── Reading ─────────
 
   // No paging options: everything, as before. With `limit`/`cursor`: a page,
