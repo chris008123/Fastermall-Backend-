@@ -249,4 +249,19 @@ describe('NotificationsService', () => {
       expect(prisma.notification.create.mock.calls.at(-1)[0].data.title).toBe('Document approved');
     });
   });
+
+  describe('support reply', () => {
+    const flush = () => new Promise((r) => setImmediate(r));
+
+    it('notifies a partner or a customer who got a reply', async () => {
+      await events.emitAsync('support.ticket.replied', { ticketId: 't1', staffUserId: 's1', subject: 'Late payout' });
+      await flush();
+      expect(prisma.notification.create.mock.calls.at(-1)[0].data).toMatchObject({ staffUserId: 's1', type: 'SUPPORT_REPLY' });
+
+      await events.emitAsync('support.ticket.replied', { ticketId: 't2', userId: 'c1', subject: 'Cold food' });
+      await flush();
+      expect(prisma.notification.create.mock.calls.at(-1)[0].data).toMatchObject({ userId: 'c1', type: 'SUPPORT_REPLY' });
+      expect(push.sendToOwners).toHaveBeenLastCalledWith({ userIds: ['c1'] }, expect.anything());
+    });
+  });
 });
