@@ -20,6 +20,13 @@ export class DocumentsController {
     return this.documents.list(user.userId);
   }
 
+  // The partner's own photo, as a 5-minute link.
+  @Roles(StaffRole.DELIVERY_PARTNER)
+  @Get('me/photo')
+  photo(@CurrentUser() user: { userId: string }) {
+    return this.documents.myPhoto(user.userId);
+  }
+
   // Step 1: get a signed URL to upload the file to.
   @Roles(StaffRole.DELIVERY_PARTNER)
   @Throttle({ default: { limit: 10, ttl: 60_000 } })

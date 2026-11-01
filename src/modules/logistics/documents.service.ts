@@ -211,6 +211,25 @@ export class DocumentsService {
     };
   }
 
+  /**
+   * A short-lived link to the partner's own profile photo (the newest one that
+   * finished uploading), so the app can show it. Anything pending or approved
+   * counts; a rejected photo does not.
+   */
+  async myPhoto(userId: string) {
+    const profile = await this.profileFor(userId);
+    const photo = await this.prisma.partnerDocument.findFirst({
+      where: { partnerId: profile.id, type: 'PROFILE_PHOTO' as DocumentType, status: { in: ['PENDING', 'APPROVED'] as DocumentStatus[] } },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+    });
+    if (!photo) throw new NotFoundException('No profile photo yet');
+    return {
+      url: await this.storage.createSignedDownload(photo.storagePath, 300),
+      expiresInSeconds: 300,
+      status: photo.status,
+    };
+  }
+
   async remove(userId: string, id: string) {
     const profile = await this.profileFor(userId);
     const doc = await this.prisma.partnerDocument.findFirst({ where: { id, partnerId: profile.id } });
