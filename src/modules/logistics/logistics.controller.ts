@@ -16,6 +16,8 @@ import {
 import type { Response } from 'express';
 import { DeliveryListQueryDto } from './dto/delivery-list-query.dto';
 import { Throttle } from '@nestjs/throttler';
+import { AccountDeletionService } from '../staff/account-deletion.service';
+import { ProfileService } from './profile.service';
 import { DocumentsService } from './documents.service';
 import { PresenceService } from './presence.service';
 import { UpdateLocationDto } from './dto/update-location.dto';
@@ -41,6 +43,8 @@ export class LogisticsController {
     private readonly logisticsService: LogisticsService,
     private readonly presence: PresenceService,
     private readonly documents: DocumentsService,
+    private readonly deletion: AccountDeletionService,
+    private readonly profileService: ProfileService,
   ) {}
 
   /**
@@ -83,6 +87,7 @@ export class LogisticsController {
     @Param('id') id: string,
     @CurrentUser() user: { userId: string; role: string },
   ) {
+    await this.deletion.assertNotLeaving(user.userId);
     await this.documents.assertCanWork(user.userId, user.role);
     return this.logisticsService.claim(id, user.userId, user.role);
   }
@@ -93,6 +98,7 @@ export class LogisticsController {
     @Param('id') id: string,
     @CurrentUser() user: { userId: string; role: string },
   ) {
+    await this.deletion.assertNotLeaving(user.userId);
     await this.documents.assertCanWork(user.userId, user.role);
     return this.logisticsService.claim(
       id,
@@ -148,14 +154,23 @@ export class LogisticsController {
    * Update delivery partner availability.
    */
   @Patch('me')
-  updateMyStatus(
+  async updateMyStatus(
     @CurrentUser() user: { userId: string },
     @Body() dto: UpdatePartnerStatusDto,
   ) {
-    return this.logisticsService.updatePartnerStatus(
-      user.userId,
-      dto,
-    );
+    // Someone whose account is being deleted cannot go back online.
+    if (dto.isAvailable === true) await this.deletion.assertNotLeaving(user.userId);
+
+    // Vehicle and phone changes are checked and saved first; if they fail,
+    // nothing else is changed.
+    const edit = await this.profileService.update(user.userId, dto);
+
+    const profile =
+      dto.isAvailable !== undefined
+        ? await this.logisticsService.updatePartnerStatus(user.userId, dto)
+        : await this.logisticsService.getMyProfile(user.userId);
+
+    return edit ? { ...profile, ...edit } : profile;
   }
 
   /**

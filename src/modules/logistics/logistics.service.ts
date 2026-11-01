@@ -825,7 +825,9 @@ export class LogisticsService {
         staffUserId: userId,
       },
       data: {
-        ...dto,
+        // Only the online switch is handled here; other profile fields go
+        // through ProfileService, which checks them.
+        ...(dto.isAvailable !== undefined ? { isAvailable: dto.isAvailable } : {}),
         ...(dto.isAvailable === true ? { lastSeenAt: new Date() } : {}),
         ...(dto.isAvailable === false ? CLEARED_LOCATION : {}),
       },
