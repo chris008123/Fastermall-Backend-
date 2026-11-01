@@ -15,6 +15,7 @@ import { OrdersModule } from './modules/orders/orders.module';
 import { LogisticsModule } from './modules/logistics/logistics.module';
 import { PaymentsModule } from './modules/payments/payments.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
+import { AppConfigModule } from './modules/app-config/app-config.module';
 import { SupportModule } from './modules/support/support.module';
 import { AdminModule } from './modules/admin/admin.module';
 import { EmailModule } from './shared/email/email.module';
@@ -36,6 +37,7 @@ import { EmailModule } from './shared/email/email.module';
     PaymentsModule,
     NotificationsModule,
     SupportModule,
+    AppConfigModule,
     AdminModule,
     EmailModule,
   ],
