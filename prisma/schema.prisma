@@ -53,6 +53,7 @@ model StaffUser {
   deliveryProfile DeliveryPartnerProfile?
   notifications   Notification[]
   devices         Device[]
+  supportTickets  SupportTicket[]
 
   @@map("staff_users")
 }
@@ -320,6 +321,7 @@ model Delivery {
   statusEvents            DeliveryStatusEvent[]
 
   @@map("deliveries")
+  supportTickets          SupportTicket[]
 }
 
 // One row each time a delivery moves to a new stage, so the app can show when it happened.
@@ -469,17 +471,41 @@ model Device {
   @@map("devices")
 }
 
+// A support request from a customer (userId) or a staff member such as a
+// delivery partner (staffUserId), optionally about one delivery.
 model SupportTicket {
-  id        String       @id @default(uuid())
-  userId    String
-  subject   String
-  message   String
-  status    TicketStatus @default(OPEN)
-  createdAt DateTime     @default(now())
-  updatedAt DateTime     @updatedAt
-  user      User         @relation(fields: [userId], references: [id])
+  id          String           @id @default(uuid())
+  userId      String?
+  staffUserId String?
+  deliveryId  String?
+  subject     String
+  message     String
+  status      TicketStatus     @default(OPEN)
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+  user        User?            @relation(fields: [userId], references: [id], onDelete: Restrict)
+  staffUser   StaffUser?       @relation(fields: [staffUserId], references: [id])
+  delivery    Delivery?        @relation(fields: [deliveryId], references: [id], onDelete: SetNull)
+  messages    SupportMessage[]
 
+  @@index([userId, createdAt])
+  @@index([staffUserId, createdAt])
+  @@index([status, createdAt])
   @@map("support_tickets")
+}
+
+// Replies after the first message (which stays on the ticket itself).
+model SupportMessage {
+  id        String        @id @default(uuid())
+  ticketId  String
+  fromAdmin Boolean       @default(false)
+  authorId  String?
+  body      String
+  createdAt DateTime      @default(now())
+  ticket    SupportTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+
+  @@index([ticketId, createdAt])
+  @@map("support_messages")
 }
 
 enum StaffRole {
