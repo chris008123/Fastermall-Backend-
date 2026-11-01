@@ -158,6 +158,20 @@ describe('DocumentsService', () => {
     });
   });
 
+  describe('myPhoto', () => {
+    it('gives a 5-minute link to the newest pending or approved photo', async () => {
+      prisma.partnerDocument.findFirst.mockResolvedValue(doc({ type: 'PROFILE_PHOTO', status: 'APPROVED' }));
+      await expect(svc.myPhoto('s1')).resolves.toEqual({ url: 'https://s/download?t=1', expiresInSeconds: 300, status: 'APPROVED' });
+      expect(storage.createSignedDownload).toHaveBeenCalledWith('partners/p1/doc1.jpg', 300);
+      expect(prisma.partnerDocument.findFirst.mock.calls.at(-1)[0].where).toMatchObject({ partnerId: 'p1', type: 'PROFILE_PHOTO', status: { in: ['PENDING', 'APPROVED'] } });
+    });
+
+    it('404s when there is no photo', async () => {
+      prisma.partnerDocument.findFirst.mockResolvedValue(null);
+      await expect(svc.myPhoto('s1')).rejects.toBeInstanceOf(NotFoundException);
+    });
+  });
+
   describe('assertCanWork', () => {
     it('lets everyone through while the requirement is off, and admins always', async () => {
       await expect(svc.assertCanWork('s1', 'DELIVERY_PARTNER')).resolves.toBeUndefined();
