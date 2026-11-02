@@ -5,7 +5,7 @@ const order = { id: 'l1', customerId: 'owner', items: [] };
 
 function setup() {
   const prisma = { laundryOrder: { findUnique: jest.fn().mockResolvedValue(order) } };
-  return new LaundryService(prisma as any, { emit: jest.fn() } as any);
+  return new LaundryService(prisma as any, { emit: jest.fn() } as any, {} as any);
 }
 
 describe('LaundryService.findOne ownership', () => {

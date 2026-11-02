@@ -73,6 +73,39 @@ describe('NotificationsService', () => {
       await expect(svc.markRead('n1', partner)).resolves.toEqual({ id: 'n1', isRead: true });
       expect(prisma.notification.updateMany.mock.calls[0][0].where).toEqual({ id: 'n1', staffUserId: 's1' });
     });
+
+    it('returns only the latest 50', async () => {
+      await svc.findMine(customer);
+      expect(prisma.notification.findMany.mock.calls[0][0]).toMatchObject({ take: 50, orderBy: { createdAt: 'desc' } });
+    });
+
+    it('marks all of the caller’s unread notifications read in one call', async () => {
+      prisma.notification.updateMany.mockResolvedValue({ count: 4 });
+      await expect(svc.markAllRead(customer)).resolves.toEqual({ count: 4 });
+      expect(prisma.notification.updateMany).toHaveBeenCalledWith({
+        where: { userId: 'c1', isRead: false },
+        data: { isRead: true },
+      });
+    });
+  });
+
+  describe('device preferences', () => {
+    it('stores the category switches sent with the device', async () => {
+      const result: any = await svc.registerDevice(customer, {
+        token: TOKEN, platform: 'android', preferences: { orderUpdates: true, announcements: false },
+      });
+      const args = prisma.device.upsert.mock.calls[0][0];
+      expect(args.create).toMatchObject({ orderUpdates: true, announcements: false });
+      expect(args.update).toMatchObject({ orderUpdates: true, announcements: false });
+      expect(result.preferences).toEqual({ orderUpdates: true, announcements: false });
+    });
+
+    it('leaves stored switches alone when none are sent', async () => {
+      await svc.registerDevice(customer, { token: TOKEN });
+      const args = prisma.device.upsert.mock.calls[0][0];
+      expect(args.update).not.toHaveProperty('orderUpdates');
+      expect(args.update).not.toHaveProperty('announcements');
+    });
   });
 
   describe('devices', () => {

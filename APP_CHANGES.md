@@ -1,0 +1,284 @@
+# Fastermall app changes after the 2 Nov backend update
+
+2 Nov 2026
+
+## Summary
+
+The backend now supports almost everything both app review docs asked for. Ship the app changes below only after the backend release is live: most of them send fields or call routes the current production API rejects.
+
+Release order:
+
+1. Backend runs `npx prisma migrate deploy`. Three new migrations apply in order: `20261102120000_add_delivery_claimed_by_staff`, `20261102130000_customer_app_backend_fields`, `20261102140000_add_product_reviews_and_addresses`.
+2. Backend deploys the API.
+3. Backend team confirms on staging, then tells both app teams it is live.
+4. App teams release the changes in this doc.
+
+Why the order matters: the API rejects any request field it does not know (`forbidNonWhitelisted`). Sending a new field such as `preferences`, `addressId` or `sort` to the old API fails the whole request with a 400. Calling a new route on the old API returns 404.
+
+Every response is still wrapped as `{ success: true, data: ... }`, and errors still look like `{ success: false, statusCode, error }`. Paths below omit the `/api/v1` prefix.
+
+## Customer app
+
+Twelve changes, numbered as in the "Backend changes needed by the app" doc. Three need no app work: 2, 9 and 12.
+
+| # | Change | File | App work |
+| --- | --- | --- | --- |
+| 1 | Laundry pickup address | `src/services/orders.ts` | Send `addressLabel` |
+| 2 | Delete account | `src/services/auth.ts` | None |
+| 3 | Edit profile | `src/services/user.ts` | Call `PATCH /auth/me` |
+| 4 | Product vendor, rating, review count | `src/services/marketplace.ts` | None for reading; new review screens |
+| 5 | Server-side sort and filters | `src/services/marketplace.ts` | Pass params, use server pages |
+| 6 | Live rider position | `app/(main)/(food)/live-tracking/[orderId].tsx` | Read `delivery.rider*` |
+| 7 | Push category switches | `src/services/push.ts` | Send `preferences` again |
+| 8 | Mark all read | `src/services/notifications.ts` | One request |
+| 9 | Notification paging | — | None |
+| 10 | Structured reports | `src/services/reports.ts` | Send three new fields |
+| 11 | Saved addresses | `useUserStore` | Use `/me/addresses`, send `addressId` |
+| 12 | Idempotency-Key | — | None |
+
+### 1. Laundry pickup address
+
+In the laundry branch of `placeOrder`, add `addressLabel: input.addressLabel` to the `POST /laundry/orders` body. Maximum 300 characters. If the customer picked a saved address, send `addressId` instead (see 11).
+
+### 2. Delete account
+
+No change. `DELETE /auth/me` now exists and returns `{ ok: true }`. Calling it twice is safe.
+
+- The account is anonymised, not removed: orders stay for accounting. Saved addresses, devices and notifications are deleted. Product reviews stay, shown as "Deleted user".
+- Afterwards `GET /auth/me` returns 401, so the existing session-end handling signs the user out.
+- The "email us to delete" fallback can be removed.
+
+### 3. Edit profile
+
+Replace the body of `updateProfile()` with `api.patch('/auth/me', { fullName: patch.name, phone: patch.phone })`. Send only the fields that changed; omitted fields are left alone.
+
+- `fullName`: 2 to 100 characters, trimmed by the server.
+- `phone`: a local 10-digit number starting with 0, e.g. `0241234567`. Convert `+233…` before sending.
+- The response has the same shape as `GET /auth/me`. Map `fullName` to `name`.
+- 409 "That number is already in use" when another account has the phone. 400 for a bad format.
+
+### 4. Product vendor and ratings
+
+`GET /marketplace/products` and `GET /marketplace/products/:id` now return, on every product:
+
+- `vendor`: `{ id, name }`, or `null` for a product with no vendor.
+- `rating`: the average to one decimal, or `null` until the first review.
+- `reviewCount`: an integer, 0 with no reviews.
+
+`toProduct()` already reads these. Keep the bundled fallback only for `imageUrl` (still `null` until photos are uploaded) and for `rating` while it is `null`.
+
+New review routes, for a product detail screen:
+
+| Route | Who | Body / query | Returns |
+| --- | --- | --- | --- |
+| `GET /marketplace/products/:id/reviews` | Anyone | `?page&pageSize` (max 50) | `{ data, page, pageSize, hasMore, total }` |
+| `GET /marketplace/products/:id/reviews/me` | Customer | — | The customer's review, or `null` |
+| `POST /marketplace/products/:id/reviews` | Customer | `{ rating: 1–5, comment? }` | `{ review, product: { id, rating, reviewCount } }` |
+| `DELETE /marketplace/products/:id/reviews/me` | Customer | — | `{ deleted: true, product }` |
+
+- A review is `{ id, productId, rating, comment, author, createdAt, updatedAt }`. `author` is the first name only.
+- One review per customer per product. Posting again replaces it; a missing `comment` clears the old one.
+- `rating` must be a whole number. `comment` is up to 1000 characters.
+- 403 "You can review a product once an order with it has been delivered" until the customer has a delivered Marketplace order containing that product. Show the Rate button only for delivered orders.
+- Limited to 10 posts a minute per device.
+- After a post or delete, update the product card from the returned `product`.
+
+### 5. Server-side sort and filters
+
+Change `getProducts()` to pass these query params and use the server's pages instead of `queryProducts()`:
+
+| App choice | Query param |
+| --- | --- |
+| Default / relevance | `sort=relevance` (or omit), newest first |
+| Popular | `sort=popular`, most often ordered |
+| Top rated | `sort=rating`, unrated products last |
+| Price low to high | `sort=price_asc` |
+| Price high to low | `sort=price_desc` |
+| Price range | `minPrice`, `maxPrice` (GH₵, 0 or more) |
+| Minimum rating | `minRating` (1 to 5, decimals allowed) |
+| In stock only | `inStock=true` |
+
+- Existing params stay: `query`, `categoryId`, `page`, `pageSize`. `pageSize` is capped at 100.
+- The response is unchanged: `{ data, page, pageSize, hasMore, total }`. Load the next page while `hasMore` is true.
+- `minRating` leaves out products that have no reviews yet.
+- 400 for any unknown param, an unknown `sort`, `minPrice` above `maxPrice`, or a non-numeric value. Don't add cache-busting params such as `_=`.
+
+### 6. Live rider position
+
+`GET /orders/:id` (and `GET /orders`) now include, on `delivery`:
+
+- `riderLat`, `riderLng`: numbers, or `null` until the rider starts sharing.
+- `riderLocationAt`: when it was last reported, or `null`.
+
+In `mapFoodOrder`, read these and pass them to `TrackingMap` instead of the `RIDER` constant. When they are `null`, hide the rider marker rather than showing a made-up position. The rider sends about one update every 10 seconds, so the existing 10-second refetch is enough. Consider marking the position as old when `riderLocationAt` is more than 2 minutes ago.
+
+`delivery.dropoffLat` / `dropoffLng` are also filled when the order used a saved address with coordinates.
+
+### 7. Push category switches
+
+In `registerDeviceWithBackend()`, send `preferences` again: `{ token, platform, preferences: { orderUpdates, announcements } }`. Both are booleans and either can be left out to keep the stored value. The same body works on `PATCH /notifications/devices`.
+
+- The response now includes `preferences: { orderUpdates, announcements }`.
+- "Order updates" turns off both order-status and delivery-progress pushes.
+- "Offers & announcements" is stored, but the backend sends no offer pushes yet.
+- The in-app list still receives every notification; the switches only stop lock-screen pushes.
+- **Do not release this before the backend is live.** The old API rejects `preferences` and every registration would fail again.
+
+### 8. Mark all read
+
+In `markAllNotificationsRead()`, replace the `Promise.all` with one `api.patch('/notifications/read-all')`. It returns `{ count }`, the number marked.
+
+### 9. Notification paging
+
+No change. `GET /notifications` now returns the latest 50, newest first. An unread badge counted from this list tops out at 50.
+
+### 10. Structured reports
+
+In `submitReport()`, add the optional fields to the `POST /support/tickets` body. `subject` (3+ characters) and `message` (5+ characters) are still required.
+
+- `targetType`: what is reported, e.g. `ORDER`, `LISTING`, `VENDOR`. Up to 50 characters.
+- `targetId`: its id. Up to 100 characters.
+- `reason`: the reason code picked in the app. Up to 100 characters.
+
+### 11. Saved addresses
+
+Back `useUserStore` addresses with these routes. Customers only.
+
+| Route | Body | Returns |
+| --- | --- | --- |
+| `GET /me/addresses` | — | Array, default first then oldest first |
+| `POST /me/addresses` | `{ label, hostel, room, landmark?, lat?, lng?, isDefault? }` | The new address |
+| `PATCH /me/addresses/:id` | Any of the same fields | The updated address |
+| `DELETE /me/addresses/:id` | — | `{ deleted: true }` |
+
+An address is `{ id, userId, label, hostel, room, landmark, lat, lng, isDefault, createdAt, updatedAt }`.
+
+- Limits: `label` 50, `hostel` 100, `room` 30, `landmark` 150 characters. `lat` and `lng` must be sent together.
+- Up to 20 addresses; the 21st returns 400.
+- The first address becomes the default automatically. Setting `isDefault: true` moves the default. Deleting the default passes it to the oldest remaining address. Refresh the list after any change, because one write can change two addresses.
+- Another customer's address id returns 404.
+- When placing an order, send `addressId` on `POST /orders` or `POST /laundry/orders`. The server copies the address onto the order as text, e.g. "Unity Hall, Room 12, near the main gate", and ignores `addressLabel`. A bad `addressId` returns 404 and no order is created.
+- Keep sending `addressLabel` when there is no saved address.
+- On the first launch after this update, upload the addresses saved on the phone, then read them from the server.
+
+### 12. Idempotency-Key
+
+No change. The `Idempotency-Key` header on `POST /orders` and `POST /laundry/orders` is now honoured. A retry with the same key returns the first order instead of creating another.
+
+- Use a new key for each new order, and the same key for its retries. Up to 255 characters.
+- Keys are per customer, so a UUID per order is enough.
+- A replayed `POST /orders` returns the order as `GET /orders/:id` does, including `delivery.code`.
+
+## Partner app
+
+Four fixes from the partner backend review (R1, R6, R7 and item 4) are live, plus rider location. Admins now run Marketplace and Laundry deliveries through the same routes.
+
+| Change | File | App work |
+| --- | --- | --- |
+| Report a failed delivery (R1) | `src/stores/jobsStore.ts` | None; the button works again |
+| "Already taken" is now 409 (item 4) | Jobs list / accept | Handle 409 |
+| 3-order limit enforced (R6) | `src/utils/jobFilters.ts` | Count admin-assigned jobs too |
+| Start an admin-assigned job (R7) | Job detail | Send `EN_ROUTE_TO_PICKUP` |
+| Share rider location | New | Location permission + updates |
+
+### Report a failed delivery (R1)
+
+"Can't complete this delivery?" works again. `PATCH /logistics/deliveries/:id/status` accepts `{ "status": "FAILED" }` from `EN_ROUTE_TO_PICKUP`, `PICKED_UP` and `EN_ROUTE_TO_CUSTOMER`.
+
+- From `ASSIGNED`, `DELIVERED` or `FAILED` it is still a 400.
+- The order's own status is left for an admin to resolve, and the customer is not notified.
+- **Keep sending `status` only.** Storing the failure reason (R1b) is not built, so a `reason` field still fails with 400.
+
+### "Already taken" is now 409 (item 4)
+
+`POST /logistics/deliveries/:id/claim` returns **409 Conflict** when the job was taken by someone else, including when two partners tap at the same moment. Messages: "This delivery has already been claimed" or "This delivery is no longer available".
+
+On 409, remove the job from the list and show the message. Don't retry.
+
+### 3-order limit enforced (R6)
+
+The server now refuses a 4th active food delivery with **400** "You can carry up to 3 food orders at once. Finish one before accepting another." Show the message as is.
+
+- Active means `ASSIGNED` (with this partner), `EN_ROUTE_TO_PICKUP`, `PICKED_UP` or `EN_ROUTE_TO_CUSTOMER`. `DELIVERED` and `FAILED` free a slot straight away.
+- The server also counts jobs an admin assigned (`ASSIGNED` with `partnerId` set). Update the count in `src/utils/jobFilters.ts` to match, or the app can show Accept when the server will refuse it.
+- The server limit can be changed with the env var `MAX_ACTIVE_FOOD_DELIVERIES` (default 3). Keep `MAX_ACTIVE_FOOD_JOBS` equal to it.
+
+### Start an admin-assigned job (R7)
+
+A job that is `ASSIGNED` and already has this partner can now be started: send `{ "status": "EN_ROUTE_TO_PICKUP" }` to the status route. Replace the "contact Support" message for these jobs with the normal Start button. After that the usual steps apply.
+
+### Share rider location
+
+The customer's tracking map shows the rider's last reported position.
+
+- Send `PATCH /logistics/deliveries/:id/location` with `{ lat, lng }` about every 10 seconds while the job is `EN_ROUTE_TO_PICKUP`, `PICKED_UP` or `EN_ROUTE_TO_CUSTOMER`.
+- With several active jobs, send it for each. Don't go faster than every 10 seconds: the route allows 20 calls a minute, and over that returns 429.
+- Returns `{ riderLat, riderLng, riderLocationAt }`.
+- 400 "Location can only be shared while the delivery is in progress" once the job is finished: stop sending for that job.
+- 400 for another partner's job, 404 for an unknown id.
+- The app needs a location permission and a short privacy explanation before this ships.
+
+### Admin-run Marketplace and Laundry deliveries
+
+For whoever builds the admin screens. Partners are unaffected and still get 403 on these deliveries.
+
+1. `GET /logistics/deliveries/unassigned` shows admins every delivery nobody has accepted.
+2. `POST /logistics/deliveries/:id/claim` by an admin accepts a Marketplace or Laundry delivery. It records the admin in `claimedByStaffId` (`partnerId` stays `null`) and moves it to `EN_ROUTE_TO_PICKUP`. No 3-order limit. If another admin accepted it first, 409.
+3. `PATCH …/status` moves it to `PICKED_UP`, `EN_ROUTE_TO_CUSTOMER`, then `DELIVERED`. **No handover code**: `DELIVERED` is sent directly. `FAILED` works from any in-progress stage.
+4. Only the admin who accepted it can move it; another admin gets 400.
+5. `GET /logistics/me/deliveries` for an admin returns the deliveries they accepted.
+
+A Marketplace order's status follows along, ending at `DELIVERED`. A Laundry order's own status is still set by laundry staff. Admins earn nothing for these deliveries.
+
+### New fields on delivery objects
+
+Delivery responses now also carry `claimedByStaffId`, `riderLat`, `riderLng` and `riderLocationAt`. Existing fields, including `order.type`, are unchanged.
+
+## New errors to handle
+
+These responses are new or changed in this release. The message is in the `error` field; there are no stable error codes yet, so match on status and route.
+
+| App | Route | Status | Message | What the app should do |
+| --- | --- | --- | --- | --- |
+| Partner | `POST /logistics/deliveries/:id/claim` | 409 (was 400) | "This delivery has already been claimed" / "…no longer available" | Drop the job from the list, show the message |
+| Partner | `POST /logistics/deliveries/:id/claim` | 400 | "You can carry up to 3 food orders at once…" | Show the message |
+| Partner | `PATCH /logistics/deliveries/:id/location` | 400 | "Location can only be shared while the delivery is in progress" | Stop sending for that job |
+| Partner | `PATCH /logistics/deliveries/:id/location` | 429 | Too many requests | Slow to one call per 10 s |
+| Customer | `PATCH /auth/me` | 409 | "That number is already in use" | Show under the phone field |
+| Customer | `GET /auth/me` | 401 | — | Already ends the session; now also after account deletion |
+| Customer | `/auth/me`, `/me/addresses`, review writes | 403 | "Only customer accounts can use this route" | Only reached with a staff token |
+| Customer | `POST /marketplace/products/:id/reviews` | 403 | "You can review a product once an order with it has been delivered" | Hide Rate until delivered |
+| Customer | `GET /marketplace/products` | 400 | Validation message | Only send the params listed in 5 |
+| Customer | `POST /me/addresses` | 400 | "You can save up to 20 addresses…" / "Send both lat and lng, or neither" | Show the message |
+| Customer | `POST /orders`, `POST /laundry/orders` | 404 | "Address not found" | Refresh saved addresses, ask again |
+| Customer | `POST /orders`, `POST /laundry/orders` | 400 | "Idempotency-Key must be at most 255 characters" | Use a UUID |
+
+## Not built yet: keep the workarounds
+
+These requests are still open on the backend. Keep the app's current behaviour (local data, "not available yet" labels) for each.
+
+| App | Item | What the app keeps doing |
+| --- | --- | --- |
+| Customer | Product photos | Bundled `imageUrl` fallback. This is data entry through admin `PATCH /marketplace/products/:id`, not code |
+| Customer | Offers push channel | The announcements switch is stored but has nothing to filter |
+| Partner | R1b failure reason | Send `FAILED` without `reason` |
+| Partner | R3 pay per delivery | Pay is still a flat GH₵ 15, not `order.deliveryFee`; decision pending |
+| Partner | R4 `vendorPayoutAmount`, reimbursements, customer ratings | Local values |
+| Partner | R5 / 11 support tickets for staff | Mocked support chat |
+| Partner | 1 account deletion and data export | Email support |
+| Partner | 2–3 logout, refresh tokens, password reset and change | Delete the token locally on logout |
+| Partner | 5 Idempotency-Key on claim, status, cash-out | No automatic retries |
+| Partner | 6 `PAY_VENDOR` status, `?status=` filter, pagination | Stages kept on the phone |
+| Partner | 7–8 payout destination, wallet ledger, cash-out | Local mock data |
+| Partner | 9 mark unread, delete, notification preferences | Phone-only unread state |
+| Partner | 10 document upload | Local mock data |
+| Partner | 13–14 error codes, `X-Request-Id`, `GET /app/config` | Hard-coded config |
+| Partner | 16 / 21 saved online state, `lastSeenAt`, auto-offline | Current toggle |
+| Partner | 18 preferences on the account | Phone-only, marked "not active yet" |
+| Partner | 19 partner location for matching | Per-job location only (see Partner app) |
+| Partner | 20 profile edits | Phone-only |
+
+Two partner items already work and can be used now:
+
+- **Mark all read:** `PATCH /notifications/read-all` also works with a staff token. It can replace the one-request-per-notification loop.
+- **Stage history:** each delivery from `GET /logistics/me/deliveries` and from the status route carries `statusEvents: [{ status, createdAt }]`, oldest first. The timeline can show when each step happened.

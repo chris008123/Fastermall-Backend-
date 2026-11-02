@@ -17,6 +17,7 @@ import {
 import { PrismaService } from '../../database/prisma.service';
 import { UpdatePartnerStatusDto } from './dto/update-partner-status.dto';
 import { UpdateDeliveryStatusDto } from './dto/update-delivery-status.dto';
+import { UpdateRiderLocationDto } from './dto/update-rider-location.dto';
 import * as bcrypt from 'bcrypt';
 // Short-distance deliveries go to walking partners, longer ones need a motorcycle.
 // Distance isn't tracked yet at the order level because GPS/maps are not part of
@@ -38,6 +39,13 @@ const NEXT_STATUS: Partial<Record<DeliveryStatus, DeliveryStatus>> = {
 // A partner can give up on a delivery from any in-progress stage. The order's
 // status is left as-is so an admin can cancel, refund or re-dispatch it.
 const FAILABLE_FROM: DeliveryStatus[] = [
+  DeliveryStatus.EN_ROUTE_TO_PICKUP,
+  DeliveryStatus.PICKED_UP,
+  DeliveryStatus.EN_ROUTE_TO_CUSTOMER,
+];
+
+// Stages during which the rider reports where they are.
+const LOCATION_SHARING_STATUSES: DeliveryStatus[] = [
   DeliveryStatus.EN_ROUTE_TO_PICKUP,
   DeliveryStatus.PICKED_UP,
   DeliveryStatus.EN_ROUTE_TO_CUSTOMER,
@@ -562,41 +570,8 @@ export class LogisticsService {
 
     const runByAdmin = isRunByAdmin(delivery);
 
-    // Make sure the caller is the person who accepted this delivery:
-    // the admin for marketplace/laundry, the partner for food.
-    if (userId && runByAdmin) {
-      if (role !== StaffRole.ADMIN) {
-        throw new ForbiddenException(
-          'Marketplace and laundry deliveries are handled by admins',
-        );
-      }
-
-      if (delivery.claimedByStaffId !== userId) {
-        throw new BadRequestException(
-          'You are not assigned to this delivery',
-        );
-      }
-    } else if (userId) {
-      const profile =
-        await this.prisma.deliveryPartnerProfile.findUnique(
-          {
-            where: {
-              staffUserId: userId,
-            },
-          },
-        );
-
-      if (!profile) {
-        throw new NotFoundException(
-          'You are not registered as a delivery partner',
-        );
-      }
-
-      if (delivery.partnerId !== profile.id) {
-        throw new BadRequestException(
-          'You are not assigned to this delivery',
-        );
-      }
+    if (userId) {
+      await this.assertHandledBy(delivery, userId, role);
     }
 
     // A repeated tap (slow network, double press) is not an error.
@@ -723,6 +698,102 @@ export class LogisticsService {
     );
 
     return result;
+  }
+
+  /**
+   * Makes sure the caller is the person who accepted this delivery:
+   * the admin for marketplace/laundry, the partner for food.
+   */
+  private async assertHandledBy(
+    delivery: {
+      partnerId: string | null;
+      claimedByStaffId: string | null;
+      order?: { type: OrderType } | null;
+    },
+    userId: string,
+    role?: string,
+  ) {
+    if (isRunByAdmin(delivery)) {
+      if (role !== StaffRole.ADMIN) {
+        throw new ForbiddenException(
+          'Marketplace and laundry deliveries are handled by admins',
+        );
+      }
+
+      if (delivery.claimedByStaffId !== userId) {
+        throw new BadRequestException(
+          'You are not assigned to this delivery',
+        );
+      }
+      return;
+    }
+
+    const profile =
+      await this.prisma.deliveryPartnerProfile.findUnique({
+        where: {
+          staffUserId: userId,
+        },
+      });
+
+    if (!profile) {
+      throw new NotFoundException(
+        'You are not registered as a delivery partner',
+      );
+    }
+
+    if (delivery.partnerId !== profile.id) {
+      throw new BadRequestException(
+        'You are not assigned to this delivery',
+      );
+    }
+  }
+
+  /**
+   * Stores the rider's current position so the customer's tracking map can
+   * show it. Only the person handling the delivery can report it, and only
+   * while the delivery is in progress.
+   */
+  async updateRiderLocation(
+    deliveryId: string,
+    dto: UpdateRiderLocationDto,
+    userId: string,
+    role?: string,
+  ) {
+    const delivery =
+      await this.prisma.delivery.findUnique({
+        where: { id: deliveryId },
+        include: { order: { select: { type: true } } },
+      });
+
+    if (!delivery) {
+      throw new NotFoundException('Delivery not found');
+    }
+
+    await this.assertHandledBy(delivery, userId, role);
+
+    const riderLocationAt = new Date();
+
+    // Checked in the same write, so a delivery that has just finished
+    // can't have its location changed afterwards.
+    const saved = await this.prisma.delivery.updateMany({
+      where: {
+        id: deliveryId,
+        status: { in: LOCATION_SHARING_STATUSES },
+      },
+      data: {
+        riderLat: dto.lat,
+        riderLng: dto.lng,
+        riderLocationAt,
+      },
+    });
+
+    if (saved.count === 0) {
+      throw new BadRequestException(
+        'Location can only be shared while the delivery is in progress',
+      );
+    }
+
+    return { riderLat: dto.lat, riderLng: dto.lng, riderLocationAt };
   }
 
   /**

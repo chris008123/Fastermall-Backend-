@@ -13,6 +13,11 @@ import { CreateOrderDto } from './dto/create-order.dto';
 import { UpdateOrderStatusDto } from './dto/update-order-status.dto';
 import * as bcrypt from 'bcrypt';
 import { randomInt } from 'crypto';
+import { isUniqueViolation } from '../../shared/utils/idempotency';
+import {
+  AddressesService,
+  formatAddressLabel,
+} from '../addresses/addresses.service';
 import {
   encryptDeliveryCode,
   decryptDeliveryCode,
@@ -26,9 +31,33 @@ export class OrdersService {
     private readonly food: FoodService,
     private readonly events: EventEmitter2,
     private readonly config: ConfigService,
+    private readonly addresses: AddressesService,
   ) {}
 
-  async createOrder(customerId: string, dto: CreateOrderDto) {
+  async createOrder(
+    customerId: string,
+    dto: CreateOrderDto,
+    idempotencyKey?: string,
+  ) {
+    // A retry of a request we already handled gets the original order back,
+    // so a timeout followed by a retry never creates a second order.
+    if (idempotencyKey) {
+      const existing = await this.prisma.order.findUnique({
+        where: { customerId_idempotencyKey: { customerId, idempotencyKey } },
+        select: { id: true },
+      });
+      if (existing) return this.findOne(existing.id, customerId);
+    }
+
+    // A saved address is copied onto the order, so later edits to it don't
+    // change where an existing order goes.
+    const savedAddress = dto.addressId
+      ? await this.addresses.getOwned(customerId, dto.addressId)
+      : null;
+    const addressLabel = savedAddress
+      ? formatAddressLabel(savedAddress)
+      : dto.addressLabel;
+
     if (dto.items.length === 0) {
       throw new BadRequestException(
         'An order must contain at least one item',
@@ -138,14 +167,17 @@ export class OrdersService {
 
     const totalAmount = subtotal + deliveryFee;
 
-    const order = await this.prisma.order.create({
+    let order;
+    try {
+      order = await this.prisma.order.create({
       data: {
         customerId,
+        idempotencyKey,
         type: dto.type,
         totalAmount,
         deliveryFee,
         vendorName: dto.vendorName,
-        addressLabel: dto.addressLabel,
+        addressLabel,
         paymentMethod: dto.paymentMethod,
         notes: dto.notes,
         items: { create: lineItems },
@@ -175,7 +207,20 @@ export class OrdersService {
           },
         },
       },
-    });
+      });
+    } catch (error) {
+      // Two retries with the same key arrived together and the other one
+      // created the order. Nothing else (delivery, stock) has happened yet
+      // for this request, so just return that order.
+      if (idempotencyKey && isUniqueViolation(error)) {
+        const existing = await this.prisma.order.findUnique({
+          where: { customerId_idempotencyKey: { customerId, idempotencyKey } },
+          select: { id: true },
+        });
+        if (existing) return this.findOne(existing.id, customerId);
+      }
+      throw error;
+    }
 
     if (
       dto.type === OrderType.FOOD ||
@@ -195,6 +240,8 @@ export class OrdersService {
         data: {
           orderId: order.id,
           status: 'ASSIGNED',
+          dropoffLat: savedAddress?.lat ?? undefined,
+          dropoffLng: savedAddress?.lng ?? undefined,
           deliveryCodeHash,
           deliveryCodeEncrypted,
         },

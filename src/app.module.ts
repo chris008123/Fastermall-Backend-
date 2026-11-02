@@ -17,6 +17,7 @@ import { PaymentsModule } from './modules/payments/payments.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
 import { SupportModule } from './modules/support/support.module';
 import { AdminModule } from './modules/admin/admin.module';
+import { AddressesModule } from './modules/addresses/addresses.module';
 import { EmailModule } from './shared/email/email.module';
 
 @Module({
@@ -37,6 +38,7 @@ import { EmailModule } from './shared/email/email.module';
     NotificationsModule,
     SupportModule,
     AdminModule,
+    AddressesModule,
     EmailModule,
   ],
   providers: [

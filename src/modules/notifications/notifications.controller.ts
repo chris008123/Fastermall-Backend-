@@ -54,6 +54,12 @@ export class NotificationsController {
     return this.notificationsService.removeDevice(user, token);
   }
 
+  // Marks every unread notification read in one request.
+  @Patch('read-all')
+  markAllRead(@CurrentUser() user: NotificationUser) {
+    return this.notificationsService.markAllRead(user);
+  }
+
   @Patch(':id/read')
   markRead(@Param('id') id: string, @CurrentUser() user: NotificationUser) {
     return this.notificationsService.markRead(id, user);

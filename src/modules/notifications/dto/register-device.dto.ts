@@ -1,4 +1,24 @@
-import { IsIn, IsNotEmpty, IsOptional, IsString, MaxLength } from 'class-validator';
+import { Type } from 'class-transformer';
+import {
+  IsBoolean,
+  IsIn,
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+  MaxLength,
+  ValidateNested,
+} from 'class-validator';
+
+// Per-category push switches. A missing field leaves the stored value alone.
+export class DevicePreferencesDto {
+  @IsOptional()
+  @IsBoolean()
+  orderUpdates?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  announcements?: boolean;
+}
 
 export class RegisterDeviceDto {
   // Expo push token, e.g. ExponentPushToken[xxxxxxxxxxxxxxxxxxxxxx]
@@ -16,4 +36,9 @@ export class RegisterDeviceDto {
   @IsString()
   @MaxLength(255)
   previousToken?: string;
+
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => DevicePreferencesDto)
+  preferences?: DevicePreferencesDto;
 }

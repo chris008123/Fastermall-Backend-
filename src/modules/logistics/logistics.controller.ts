@@ -20,6 +20,8 @@ import { CurrentUser } from '../../shared/decorators/current-user.decorator';
 
 import { StaffRole } from '@prisma/client';
 import { VerifyDeliveryCodeDto } from './dto/verify-delivery-code.dto';
+import { UpdateRiderLocationDto } from './dto/update-rider-location.dto';
+import { Throttle } from '@nestjs/throttler';
 
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(StaffRole.DELIVERY_PARTNER, StaffRole.ADMIN)
@@ -81,6 +83,26 @@ export class LogisticsController {
     @CurrentUser() user: { userId: string; role: string },
   ) {
     return this.logisticsService.updateStatus(
+      id,
+      dto,
+      user.userId,
+      user.role,
+    );
+  }
+
+  /**
+   * Rider's current position, for the customer's tracking map.
+   * The app should send it about every 10 seconds while a delivery is
+   * in progress; the limit leaves room for retries.
+   */
+  @Throttle({ default: { limit: 20, ttl: 60_000 } })
+  @Patch('deliveries/:id/location')
+  updateRiderLocation(
+    @Param('id') id: string,
+    @Body() dto: UpdateRiderLocationDto,
+    @CurrentUser() user: { userId: string; role: string },
+  ) {
+    return this.logisticsService.updateRiderLocation(
       id,
       dto,
       user.userId,

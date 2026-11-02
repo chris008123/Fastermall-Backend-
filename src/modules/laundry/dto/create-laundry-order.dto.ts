@@ -4,6 +4,7 @@ import {
   IsInt,
   IsOptional,
   IsString,
+  MaxLength,
   Min,
   ValidateNested,
 } from 'class-validator';
@@ -43,4 +44,16 @@ export class CreateLaundryOrderDto {
   @IsOptional()
   @IsString()
   estimatedKg?: string;
+
+  // Hostel / room / landmark the rider collects the bag from.
+  @IsOptional()
+  @IsString()
+  @MaxLength(300)
+  addressLabel?: string;
+
+  // One of the customer's saved addresses. When sent, the server copies it
+  // onto the order and ignores addressLabel.
+  @IsOptional()
+  @IsString()
+  addressId?: string;
 }

@@ -13,6 +13,7 @@ import { MarketplaceService } from './marketplace.service';
 import { CreateCategoryDto } from './dto/create-category.dto';
 import { CreateProductDto } from './dto/create-product.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
+import { ListProductsQueryDto } from './dto/list-products-query.dto';
 import { JwtAuthGuard } from '../../shared/guards/jwt-auth.guard';
 import { RolesGuard } from '../../shared/guards/roles.guard';
 import { Roles } from '../../shared/decorators/roles.decorator';
@@ -28,18 +29,8 @@ export class MarketplaceController {
   }
 
   @Get('products')
-  findAllProducts(
-    @Query('query') query?: string,
-    @Query('categoryId') categoryId?: string,
-    @Query('page') page?: string,
-    @Query('pageSize') pageSize?: string,
-  ) {
-    return this.marketplaceService.findAllProducts({
-      query,
-      categoryId,
-      page: page ? Number(page) : undefined,
-      pageSize: pageSize ? Number(pageSize) : undefined,
-    });
+  findAllProducts(@Query() params: ListProductsQueryDto) {
+    return this.marketplaceService.findAllProducts(params);
   }
 
   @Get('products/:id')

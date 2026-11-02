@@ -41,6 +41,13 @@ export class CreateOrderDto {
   @IsString()
   addressLabel?: string;
 
+  // One of the customer's saved addresses. When sent, the server copies it
+  // onto the order (and its coordinates onto the delivery) and ignores
+  // addressLabel.
+  @IsOptional()
+  @IsString()
+  addressId?: string;
+
   /**
    * @deprecated Ignored. The delivery fee is set by the server from the
    * vendor. Kept only so older app versions that still send it are not

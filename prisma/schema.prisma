@@ -29,6 +29,11 @@ model User {
   devices        Device[]
   orders         Order[]
   supportTickets SupportTicket[]
+  // Set when the customer deletes their account. The row is kept (orders
+  // reference it) but every personal field is cleared.
+  deletedAt      DateTime?
+  reviews        ProductReview[]
+  addresses      Address[]
 
   @@map("users")
 }
@@ -101,6 +106,12 @@ model Product {
   orderItems  OrderItem[]
   category    Category?          @relation(fields: [categoryId], references: [id])
   vendor      MarketplaceVendor? @relation(fields: [vendorId], references: [id])
+  // Average of the product's reviews (1-5), null until the first review.
+  // Kept up to date when a review is written or removed, so listings can
+  // sort and filter on it.
+  rating      Float?
+  reviewCount Int                @default(0)
+  reviews     ProductReview[]
 
   @@map("products")
 }
@@ -152,23 +163,27 @@ model MenuItem {
 }
 
 model Order {
-  id            String      @id @default(uuid())
-  customerId    String
-  type          OrderType
-  status        OrderStatus @default(PENDING)
-  totalAmount   Decimal     @db.Decimal(10, 2)
-  createdAt     DateTime    @default(now())
-  updatedAt     DateTime    @updatedAt
-  addressLabel  String?
-  deliveryFee   Decimal     @default(0) @db.Decimal(10, 2)
-  notes         String?
-  paymentMethod String?
-  vendorName    String?
-  delivery      Delivery?
-  items         OrderItem[]
-  customer      User        @relation(fields: [customerId], references: [id])
-  payment       Payment?
+  id             String      @id @default(uuid())
+  customerId     String
+  type           OrderType
+  status         OrderStatus @default(PENDING)
+  totalAmount    Decimal     @db.Decimal(10, 2)
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+  addressLabel   String?
+  deliveryFee    Decimal     @default(0) @db.Decimal(10, 2)
+  notes          String?
+  paymentMethod  String?
+  vendorName     String?
+  delivery       Delivery?
+  items          OrderItem[]
+  customer       User        @relation(fields: [customerId], references: [id])
+  payment        Payment?
+  // Sent by the app as the Idempotency-Key header so a retried request
+  // returns the first order instead of creating a second one.
+  idempotencyKey String?
 
+  @@unique([customerId, idempotencyKey])
   @@map("orders")
 }
 
@@ -222,9 +237,13 @@ model LaundryOrder {
   payment  Payment?
   delivery Delivery?
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  // Hostel / room / landmark the rider collects the bag from.
+  addressLabel   String?
+  idempotencyKey String?
 
+  @@unique([customerId, idempotencyKey])
   @@map("laundry_orders")
 }
 
@@ -270,6 +289,11 @@ model Delivery {
   claimedByStaffId        String?
   claimedBy               StaffUser?              @relation(fields: [claimedByStaffId], references: [id])
   statusEvents            DeliveryStatusEvent[]
+  // Last position reported by the rider (partner or admin) while the
+  // delivery is in progress. Shown on the customer's tracking map.
+  riderLat                Float?
+  riderLng                Float?
+  riderLocationAt         DateTime?
 
   @@index([claimedByStaffId])
   @@map("deliveries")
@@ -338,15 +362,19 @@ model Notification {
 // or a staff member (StaffUser). The token is unique, so logging in with a
 // different account on the same phone moves the token to the new owner.
 model Device {
-  id          String     @id @default(uuid())
-  token       String     @unique
-  platform    String
-  userId      String?
-  staffUserId String?
-  lastSeenAt  DateTime   @default(now())
-  createdAt   DateTime   @default(now())
-  user        User?      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  staffUser   StaffUser? @relation(fields: [staffUserId], references: [id], onDelete: Cascade)
+  id            String     @id @default(uuid())
+  token         String     @unique
+  platform      String
+  userId        String?
+  staffUserId   String?
+  lastSeenAt    DateTime   @default(now())
+  createdAt     DateTime   @default(now())
+  user          User?      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  staffUser     StaffUser? @relation(fields: [staffUserId], references: [id], onDelete: Cascade)
+  // Per-category push switches from the app. The in-app list still
+  // gets every notification; these only stop the lock-screen push.
+  orderUpdates  Boolean    @default(true)
+  announcements Boolean    @default(true)
 
   @@index([userId])
   @@index([staffUserId])
@@ -354,14 +382,18 @@ model Device {
 }
 
 model SupportTicket {
-  id        String       @id @default(uuid())
-  userId    String
-  subject   String
-  message   String
-  status    TicketStatus @default(OPEN)
-  createdAt DateTime     @default(now())
-  updatedAt DateTime     @updatedAt
-  user      User         @relation(fields: [userId], references: [id])
+  id         String       @id @default(uuid())
+  userId     String
+  subject    String
+  message    String
+  status     TicketStatus @default(OPEN)
+  createdAt  DateTime     @default(now())
+  updatedAt  DateTime     @updatedAt
+  user       User         @relation(fields: [userId], references: [id])
+  // Optional: what a "Report a problem" ticket is about.
+  targetType String?
+  targetId   String?
+  reason     String?
 
   @@map("support_tickets")
 }
@@ -436,4 +468,40 @@ enum TicketStatus {
   IN_PROGRESS
   RESOLVED
   CLOSED
+}
+
+// One review per customer per product. Writing again edits it.
+model ProductReview {
+  id        String   @id @default(uuid())
+  productId String
+  userId    String
+  rating    Int
+  comment   String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([productId, userId])
+  @@index([productId, createdAt])
+  @@map("product_reviews")
+}
+
+// A customer's saved delivery address. At most one per customer is the default.
+model Address {
+  id        String   @id @default(uuid())
+  userId    String
+  label     String
+  hostel    String
+  room      String
+  landmark  String?
+  lat       Float?
+  lng       Float?
+  isDefault Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("addresses")
 }

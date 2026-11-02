@@ -18,6 +18,8 @@ import { ResendOtpDto } from './dto/resend-otp.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
 import { GoogleLoginDto } from './dto/google-login.dto';
+import { UpdateProfileDto } from './dto/update-profile.dto';
+import { Prisma, User } from '@prisma/client';
 
 const OTP_EXPIRY_MINUTES = 10;
 const RESET_EXPIRY_MINUTES = 15;
@@ -352,12 +354,90 @@ export class IdentityService {
       where: { id: userId },
     });
 
+    // A deleted account answers 401 so an old token ends the app's session.
+    if (!user || user.deletedAt) {
+      throw new UnauthorizedException();
+    }
+
+    return this.toSafeUser(user);
+  }
+
+  // PATCH /auth/me — name and phone. Returns the same shape as GET /auth/me.
+  async updateProfile(userId: string, dto: UpdateProfileDto) {
+    await this.getProfile(userId); // 401 for a missing or deleted account
+
+    try {
+      const user = await this.prisma.user.update({
+        where: { id: userId },
+        data: {
+          ...(dto.fullName !== undefined ? { fullName: dto.fullName.trim() } : {}),
+          ...(dto.phone !== undefined ? { phone: dto.phone } : {}),
+        },
+      });
+      return this.toSafeUser(user);
+    } catch (error) {
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === 'P2002'
+      ) {
+        throw new ConflictException('That number is already in use');
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * DELETE /auth/me — deletes the customer's account.
+   *
+   * The User row is kept because orders and payments reference it and must
+   * stay for accounting, but every personal field is cleared, so the email
+   * and phone can be used for a new account. Devices are removed so pushes
+   * stop, and in-app notifications and saved addresses are deleted. Product
+   * reviews stay, shown as "Deleted user". Calling it again is a no-op.
+   */
+  async deleteAccount(userId: string) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true, deletedAt: true },
+    });
+
     if (!user) {
       throw new UnauthorizedException();
     }
 
-    const { passwordHash, otpCodeHash, resetCodeHash, ...safeUser } = user;
+    if (user.deletedAt) {
+      return { ok: true };
+    }
 
+    await this.prisma.$transaction([
+      this.prisma.user.update({
+        where: { id: userId },
+        data: {
+          fullName: 'Deleted user',
+          email: null,
+          phone: null,
+          googleId: null,
+          passwordHash: null,
+          isVerified: false,
+          otpCodeHash: null,
+          otpExpiresAt: null,
+          otpAttempts: 0,
+          resetCodeHash: null,
+          resetExpiresAt: null,
+          resetAttempts: 0,
+          deletedAt: new Date(),
+        },
+      }),
+      this.prisma.device.deleteMany({ where: { userId } }),
+      this.prisma.notification.deleteMany({ where: { userId } }),
+      this.prisma.address.deleteMany({ where: { userId } }),
+    ]);
+
+    return { ok: true };
+  }
+
+  private toSafeUser(user: User) {
+    const { passwordHash, otpCodeHash, resetCodeHash, deletedAt, ...safeUser } = user;
     return safeUser;
   }
 

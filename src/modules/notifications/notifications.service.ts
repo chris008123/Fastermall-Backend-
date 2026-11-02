@@ -22,6 +22,8 @@ interface NotifyInput {
 
 // Android notification channels. These ids must match the channels the app
 // creates with Notifications.setNotificationChannelAsync(...).
+const NOTIFICATION_LIST_LIMIT = 50;
+
 const CHANNELS = {
   orders: 'orders',
   deliveries: 'deliveries',
@@ -202,11 +204,21 @@ export class NotificationsService {
 
   // ───────── Reading ─────────
 
+  // The latest notifications only; older ones stay in the database.
   findMine(user: NotificationUser) {
     return this.prisma.notification.findMany({
       where: this.ownerWhere(user),
       orderBy: { createdAt: 'desc' },
+      take: NOTIFICATION_LIST_LIMIT,
     });
+  }
+
+  async markAllRead(user: NotificationUser) {
+    const result = await this.prisma.notification.updateMany({
+      where: { ...this.ownerWhere(user), isRead: false },
+      data: { isRead: true },
+    });
+    return { count: result.count };
   }
 
   // Only the owner can mark a notification read. Someone else's id answers
@@ -239,12 +251,33 @@ export class NotificationsService {
 
     // The token is unique: if another account used this phone before, the
     // token moves to the account that is logged in now.
+    const preferences = {
+      ...(dto.preferences?.orderUpdates !== undefined
+        ? { orderUpdates: dto.preferences.orderUpdates }
+        : {}),
+      ...(dto.preferences?.announcements !== undefined
+        ? { announcements: dto.preferences.announcements }
+        : {}),
+    };
     const device = await this.prisma.device.upsert({
       where: { token: dto.token },
-      create: { token: dto.token, platform: dto.platform ?? 'unknown', ...owner },
-      update: { ...(dto.platform ? { platform: dto.platform } : {}), ...owner, lastSeenAt: new Date() },
+      create: { token: dto.token, platform: dto.platform ?? 'unknown', ...owner, ...preferences },
+      update: {
+        ...(dto.platform ? { platform: dto.platform } : {}),
+        ...owner,
+        ...preferences,
+        lastSeenAt: new Date(),
+      },
     });
-    return { id: device.id, token: device.token, platform: device.platform };
+    return {
+      id: device.id,
+      token: device.token,
+      platform: device.platform,
+      preferences: {
+        orderUpdates: device.orderUpdates,
+        announcements: device.announcements,
+      },
+    };
   }
 
   async removeDevice(user: NotificationUser, token: string) {

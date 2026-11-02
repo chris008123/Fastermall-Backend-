@@ -1,4 +1,5 @@
-import { Body, Controller, Get, Param, Patch, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Headers, Param, Patch, Post, UseGuards } from '@nestjs/common';
+import { parseIdempotencyKey } from '../../shared/utils/idempotency';
 import { LaundryService } from './laundry.service';
 import { CreateLaundryOrderDto } from './dto/create-laundry-order.dto';
 import { UpdateLaundryStatusDto } from './dto/update-laundry-status.dto';
@@ -19,8 +20,16 @@ export class LaundryController {
   }
 
   @Post('orders')
-  create(@CurrentUser() user: { userId: string }, @Body() dto: CreateLaundryOrderDto) {
-    return this.laundryService.createOrder(user.userId, dto);
+  create(
+    @CurrentUser() user: { userId: string },
+    @Body() dto: CreateLaundryOrderDto,
+    @Headers('idempotency-key') idempotencyKey?: string,
+  ) {
+    return this.laundryService.createOrder(
+      user.userId,
+      dto,
+      parseIdempotencyKey(idempotencyKey),
+    );
   }
 
   @Get('orders')

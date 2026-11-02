@@ -19,7 +19,7 @@ function setup(menuItems: any[], vendorFee: any = '7.50', marketplaceFee = 5) {
   const food = { getMenuItemsByIds: jest.fn().mockResolvedValue(menuItems) };
   const events = { emit: jest.fn() };
   const config = { get: jest.fn((k: string) => (k === 'orders.marketplaceDeliveryFee' ? marketplaceFee : undefined)) };
-  const svc = new OrdersService(prisma, {} as any, food as any, events as any, config as any);
+  const svc = new OrdersService(prisma, {} as any, food as any, events as any, config as any, {} as any);
   return { svc, prisma, created };
 }
 

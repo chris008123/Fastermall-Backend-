@@ -1,4 +1,5 @@
-import { Body, Controller, Get, Param, Patch, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Headers, Param, Patch, Post, UseGuards } from '@nestjs/common';
+import { parseIdempotencyKey } from '../../shared/utils/idempotency';
 import { OrdersService } from './orders.service';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { UpdateOrderStatusDto } from './dto/update-order-status.dto';
@@ -14,8 +15,16 @@ export class OrdersController {
   constructor(private readonly ordersService: OrdersService) {}
 
   @Post()
-  create(@CurrentUser() user: { userId: string }, @Body() dto: CreateOrderDto) {
-    return this.ordersService.createOrder(user.userId, dto);
+  create(
+    @CurrentUser() user: { userId: string },
+    @Body() dto: CreateOrderDto,
+    @Headers('idempotency-key') idempotencyKey?: string,
+  ) {
+    return this.ordersService.createOrder(
+      user.userId,
+      dto,
+      parseIdempotencyKey(idempotencyKey),
+    );
   }
 
   @Get()

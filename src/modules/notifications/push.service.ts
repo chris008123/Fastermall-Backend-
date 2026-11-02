@@ -17,6 +17,21 @@ export interface PushTargets {
   staffUserIds?: string[];
 }
 
+// Skips devices whose owner switched this category off in the app.
+// Order and delivery progress count as "order updates"; offers and
+// announcements as "announcements". Anything else always goes out.
+function categoryFilter(channelId?: string) {
+  switch (channelId) {
+    case 'orders':
+    case 'deliveries':
+      return { orderUpdates: true };
+    case 'offers':
+      return { announcements: true };
+    default:
+      return {};
+  }
+}
+
 // Expo asks that receipts are fetched ~15 minutes after sending.
 const RECEIPT_DELAY_MS = 15 * 60 * 1000;
 
@@ -51,7 +66,7 @@ export class PushService {
       if (or.length === 0) return;
 
       const devices = await this.prisma.device.findMany({
-        where: { OR: or },
+        where: { OR: or, ...categoryFilter(payload.channelId) },
         select: { token: true },
       });
       await this.send(

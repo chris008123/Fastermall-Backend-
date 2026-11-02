@@ -1,4 +1,14 @@
-import { Body, Controller, Get, Post, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Patch,
+  Post,
+  UseGuards,
+} from '@nestjs/common';
+import { UpdateProfileDto } from './dto/update-profile.dto';
+import { assertCustomer } from '../../shared/utils/assert-customer';
 import { Throttle } from '@nestjs/throttler';
 import { IdentityService } from './identity.service';
 import { RegisterDto } from './dto/register.dto';
@@ -65,5 +75,23 @@ export class IdentityController {
   @Get('me')
   me(@CurrentUser() user: { userId: string }) {
     return this.identityService.getProfile(user.userId);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Patch('me')
+  updateMe(
+    @CurrentUser() user: { userId: string; role: string },
+    @Body() dto: UpdateProfileDto,
+  ) {
+    assertCustomer(user);
+    return this.identityService.updateProfile(user.userId, dto);
+  }
+
+  @Throttle(STRICT)
+  @UseGuards(JwtAuthGuard)
+  @Delete('me')
+  deleteMe(@CurrentUser() user: { userId: string; role: string }) {
+    assertCustomer(user);
+    return this.identityService.deleteAccount(user.userId);
   }
 }

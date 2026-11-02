@@ -3,6 +3,11 @@ import { EventEmitter2 } from '@nestjs/event-emitter';
 import { PrismaService } from '../../database/prisma.service';
 import { CreateLaundryOrderDto } from './dto/create-laundry-order.dto';
 import { UpdateLaundryStatusDto } from './dto/update-laundry-status.dto';
+import { isUniqueViolation } from '../../shared/utils/idempotency';
+import {
+  AddressesService,
+  formatAddressLabel,
+} from '../addresses/addresses.service';
 
 // Flat per-item price for MVP — replace with a real pricing table per package later
 
@@ -12,6 +17,7 @@ export class LaundryService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly events: EventEmitter2,
+    private readonly addresses: AddressesService,
   ) {}
 
   async getCatalog() {
@@ -21,7 +27,25 @@ export class LaundryService {
     });
   }
 
-  async createOrder(customerId: string, dto: CreateLaundryOrderDto) {
+  async createOrder(
+    customerId: string,
+    dto: CreateLaundryOrderDto,
+    idempotencyKey?: string,
+  ) {
+    // A retry of a request we already handled gets the original order back.
+    if (idempotencyKey) {
+      const existing = await this.findByIdempotencyKey(customerId, idempotencyKey);
+      if (existing) return existing;
+    }
+
+    // A saved address is copied onto the order, so later edits to it don't
+    // change where an existing order is collected from.
+    const addressLabel = dto.addressId
+      ? formatAddressLabel(
+          await this.addresses.getOwned(customerId, dto.addressId),
+        )
+      : dto.addressLabel;
+
     const catalogIds = dto.items.map((item) => item.catalogItemId);
 
     const catalogItems = await this.prisma.laundryCatalogItem.findMany({
@@ -71,37 +95,56 @@ export class LaundryService {
 
     const totalAmount = laundryTotal + deliveryFee;
 
-    const order = await this.prisma.laundryOrder.create({
-      data: {
-        customerId,
-        instructions: dto.instructions,
-        pickupMode: dto.pickupMode,
-        pickupAt: dto.pickupAt ? new Date(dto.pickupAt) : undefined,
-        deliverAt: dto.deliverAt ? new Date(dto.deliverAt) : undefined,
-        estimatedKg: dto.estimatedKg
-          ? Number(dto.estimatedKg)
-          : undefined,
-        laundryTotal,
-        deliveryFee,
-        totalAmount,
-        items: {
-          create: laundryItems,
-        },
-      },
-      include: {
-        items: {
-          include: {
-            catalogItem: true,
+    let order;
+    try {
+      order = await this.prisma.laundryOrder.create({
+        data: {
+          customerId,
+          idempotencyKey,
+          addressLabel,
+          instructions: dto.instructions,
+          pickupMode: dto.pickupMode,
+          pickupAt: dto.pickupAt ? new Date(dto.pickupAt) : undefined,
+          deliverAt: dto.deliverAt ? new Date(dto.deliverAt) : undefined,
+          estimatedKg: dto.estimatedKg
+            ? Number(dto.estimatedKg)
+            : undefined,
+          laundryTotal,
+          deliveryFee,
+          totalAmount,
+          items: {
+            create: laundryItems,
           },
         },
-      },
-    });
+        include: {
+          items: {
+            include: {
+              catalogItem: true,
+            },
+          },
+        },
+      });
+    } catch (error) {
+      // Two retries with the same key arrived together and the other won.
+      if (idempotencyKey && isUniqueViolation(error)) {
+        const existing = await this.findByIdempotencyKey(customerId, idempotencyKey);
+        if (existing) return existing;
+      }
+      throw error;
+    }
 
     this.events.emit('laundry.created', order);
 
     return order;
   }
-  
+
+  private findByIdempotencyKey(customerId: string, idempotencyKey: string) {
+    return this.prisma.laundryOrder.findUnique({
+      where: { customerId_idempotencyKey: { customerId, idempotencyKey } },
+      include: { items: { include: { catalogItem: true } } },
+    });
+  }
+
   findMyOrders(customerId: string) {
     return this.prisma.laundryOrder.findMany({
       where: { customerId },
