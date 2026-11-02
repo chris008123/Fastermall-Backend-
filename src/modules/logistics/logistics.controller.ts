@@ -78,12 +78,13 @@ export class LogisticsController {
   updateStatus(
     @Param('id') id: string,
     @Body() dto: UpdateDeliveryStatusDto,
-    @CurrentUser() user: { userId: string },
+    @CurrentUser() user: { userId: string; role: string },
   ) {
     return this.logisticsService.updateStatus(
       id,
       dto,
       user.userId,
+      user.role,
     );
   }
 
@@ -106,10 +107,11 @@ export class LogisticsController {
    */
   @Get('me/deliveries')
   myDeliveries(
-    @CurrentUser() user: { userId: string },
+    @CurrentUser() user: { userId: string; role: string },
   ) {
     return this.logisticsService.myDeliveries(
       user.userId,
+      user.role,
     );
   }
 

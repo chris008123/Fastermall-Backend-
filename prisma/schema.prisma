@@ -34,18 +34,19 @@ model User {
 }
 
 model StaffUser {
-  id              String                  @id @default(uuid())
-  email           String?                 @unique
-  phone           String?                 @unique
-  passwordHash    String
-  fullName        String
-  role            StaffRole
-  isVerified      Boolean                 @default(false)
-  createdAt       DateTime                @default(now())
-  updatedAt       DateTime                @updatedAt
-  deliveryProfile DeliveryPartnerProfile?
-  notifications   Notification[]
-  devices         Device[]
+  id                String                  @id @default(uuid())
+  email             String?                 @unique
+  phone             String?                 @unique
+  passwordHash      String
+  fullName          String
+  role              StaffRole
+  isVerified        Boolean                 @default(false)
+  createdAt         DateTime                @default(now())
+  updatedAt         DateTime                @updatedAt
+  deliveryProfile   DeliveryPartnerProfile?
+  notifications     Notification[]
+  devices           Device[]
+  claimedDeliveries Delivery[]
 
   @@map("staff_users")
 }
@@ -264,8 +265,13 @@ model Delivery {
   laundryOrder            LaundryOrder?           @relation(fields: [laundryOrderId], references: [id])
   order                   Order?                  @relation(fields: [orderId], references: [id])
   partner                 DeliveryPartnerProfile? @relation(fields: [partnerId], references: [id])
+  // Marketplace and laundry deliveries are run by admins, who have no partner
+  // profile. This records which admin accepted the delivery.
+  claimedByStaffId        String?
+  claimedBy               StaffUser?              @relation(fields: [claimedByStaffId], references: [id])
   statusEvents            DeliveryStatusEvent[]
 
+  @@index([claimedByStaffId])
   @@map("deliveries")
 }
 

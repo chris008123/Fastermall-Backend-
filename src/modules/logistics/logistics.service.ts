@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   NotFoundException,
@@ -9,6 +10,7 @@ import {
   DeliveryStatus,
   OrderStatus,
   OrderType,
+  Prisma,
   StaffRole,
 } from '@prisma/client';
 
@@ -21,14 +23,77 @@ import * as bcrypt from 'bcrypt';
 // the current MVP.
 const WALKING_MAX_DISTANCE_KM = 2;
 
-// The only moves a partner can make with PATCH /deliveries/:id/status.
-// Claiming sets EN_ROUTE_TO_PICKUP, and DELIVERED only comes from verify-code,
-// so neither appears as a target here. Anything not listed (skipping a step,
-// going backwards, touching a DELIVERED or FAILED job) is rejected.
+// The only forward moves a partner can make with PATCH /deliveries/:id/status.
+// DELIVERED only comes from verify-code, so it never appears as a target here.
+// ASSIGNED -> EN_ROUTE_TO_PICKUP is for a delivery an admin assigned to the
+// partner; unclaimed deliveries have no partnerId, so the ownership check in
+// updateStatus sends them through claim instead. Anything not listed (skipping
+// a step, going backwards, touching a DELIVERED or FAILED job) is rejected.
 const NEXT_STATUS: Partial<Record<DeliveryStatus, DeliveryStatus>> = {
+  [DeliveryStatus.ASSIGNED]: DeliveryStatus.EN_ROUTE_TO_PICKUP,
   [DeliveryStatus.EN_ROUTE_TO_PICKUP]: DeliveryStatus.PICKED_UP,
   [DeliveryStatus.PICKED_UP]: DeliveryStatus.EN_ROUTE_TO_CUSTOMER,
 };
+
+// A partner can give up on a delivery from any in-progress stage. The order's
+// status is left as-is so an admin can cancel, refund or re-dispatch it.
+const FAILABLE_FROM: DeliveryStatus[] = [
+  DeliveryStatus.EN_ROUTE_TO_PICKUP,
+  DeliveryStatus.PICKED_UP,
+  DeliveryStatus.EN_ROUTE_TO_CUSTOMER,
+];
+
+// Deliveries that still occupy one of the partner's slots. ASSIGNED counts
+// because a delivery with a partnerId in ASSIGNED was given to them by an admin.
+const UNFINISHED_STATUSES: DeliveryStatus[] = [
+  DeliveryStatus.ASSIGNED,
+  DeliveryStatus.EN_ROUTE_TO_PICKUP,
+  DeliveryStatus.PICKED_UP,
+  DeliveryStatus.EN_ROUTE_TO_CUSTOMER,
+];
+
+// Marketplace and laundry deliveries (anything that isn't a food order) are
+// run by admins: they accept them like partners do and finish them without
+// the customer's handover code.
+function isRunByAdmin(delivery: {
+  order?: { type: OrderType } | null;
+}): boolean {
+  return delivery.order?.type !== OrderType.FOOD;
+}
+
+const DEFAULT_MAX_ACTIVE_FOOD_DELIVERIES = 3;
+
+// Read on each claim so the limit can be changed through the environment.
+// Keep in step with MAX_ACTIVE_FOOD_JOBS in the partner app.
+function maxActiveFoodDeliveries(): number {
+  const fromEnv = Number.parseInt(
+    process.env.MAX_ACTIVE_FOOD_DELIVERIES ?? '',
+    10,
+  );
+  return Number.isInteger(fromEnv) && fromEnv > 0
+    ? fromEnv
+    : DEFAULT_MAX_ACTIVE_FOOD_DELIVERIES;
+}
+
+const DELIVERY_DETAIL_INCLUDE = {
+  order: {
+    include: {
+      customer: {
+        select: {
+          id: true,
+          fullName: true,
+        },
+      },
+      items: {
+        include: {
+          menuItem: true,
+          product: true,
+        },
+      },
+    },
+  },
+  laundryOrder: true,
+} satisfies Prisma.DeliveryInclude;
 
 @Injectable()
 export class LogisticsService {
@@ -129,6 +194,7 @@ export class LogisticsService {
     return this.prisma.delivery.findMany({
       where: {
         partnerId: null,
+        claimedByStaffId: null,
         status: DeliveryStatus.ASSIGNED,
         ...(role === StaffRole.ADMIN
           ? {}
@@ -160,26 +226,17 @@ export class LogisticsService {
   }
 
   /**
-   * Delivery partner claims a delivery.
+   * Accepts a delivery.
+   *
+   * Food deliveries are claimed by delivery partners (at most a few at once).
+   * Marketplace and laundry deliveries are run by admins, who accept them the
+   * same way but have no partner profile, so the admin's own id is recorded.
    */
   async claim(
     deliveryId: string,
     userId: string,
     role?: string,
   ) {
-    const profile =
-      await this.prisma.deliveryPartnerProfile.findUnique({
-        where: {
-          staffUserId: userId,
-        },
-      });
-
-    if (!profile) {
-      throw new NotFoundException(
-        'You are not registered as a delivery partner',
-      );
-    }
-
     const delivery =
       await this.prisma.delivery.findUnique({
         where: {
@@ -196,61 +253,99 @@ export class LogisticsService {
       );
     }
 
+    const runByAdmin = isRunByAdmin(delivery);
+
     // Delivery partners can only take food deliveries. Marketplace and
     // laundry deliveries are handled by admins.
-    if (
-      role !== StaffRole.ADMIN &&
-      delivery.order?.type !== OrderType.FOOD
-    ) {
+    if (runByAdmin && role !== StaffRole.ADMIN) {
       throw new ForbiddenException(
         'Only food deliveries can be claimed by delivery partners',
       );
     }
 
-    if (delivery.partnerId) {
-      throw new BadRequestException(
+    const profile = runByAdmin
+      ? null
+      : await this.prisma.deliveryPartnerProfile.findUnique({
+          where: {
+            staffUserId: userId,
+          },
+        });
+
+    if (!runByAdmin && !profile) {
+      throw new NotFoundException(
+        'You are not registered as a delivery partner',
+      );
+    }
+
+    // 409 so the app can tell "someone else got it" apart from other errors.
+    if (delivery.partnerId || delivery.claimedByStaffId) {
+      throw new ConflictException(
         'This delivery has already been claimed',
       );
     }
 
     if (delivery.status !== DeliveryStatus.ASSIGNED) {
-      throw new BadRequestException(
+      throw new ConflictException(
         'This delivery is no longer available',
       );
     }
 
     const claimed = await this.prisma.$transaction(
       async (tx) => {
-        const updated =
-          await tx.delivery.update({
+        if (profile && role !== StaffRole.ADMIN) {
+          // Lock this partner's profile row so two claims sent at the same
+          // moment by the same partner run one after the other, and the
+          // second one sees the first in its count.
+          await tx.$queryRaw`SELECT id FROM "delivery_partner_profiles" WHERE id = ${profile.id} FOR UPDATE`;
+
+          const max = maxActiveFoodDeliveries();
+          const activeFood = await tx.delivery.count({
             where: {
-              id: deliveryId,
-            },
-            data: {
               partnerId: profile.id,
-              status:
-                DeliveryStatus.EN_ROUTE_TO_PICKUP,
-            },
-            include: {
-              order: {
-                include: {
-                  customer: {
-                    select: {
-                      id: true,
-                      fullName: true,
-                    },
-                  },
-                  items: {
-                    include: {
-                      menuItem: true,
-                      product: true,
-                    },
-                  },
-                },
-              },
-              laundryOrder: true,
+              status: { in: UNFINISHED_STATUSES },
+              order: { type: OrderType.FOOD },
             },
           });
+
+          if (activeFood >= max) {
+            throw new BadRequestException(
+              `You can carry up to ${max} food orders at once. Finish one before accepting another.`,
+            );
+          }
+        }
+
+        // Only take the delivery if it is still unclaimed. If two people
+        // claim at once, Postgres re-checks this condition for the second
+        // one after the first commits, so only one update succeeds.
+        const taken = await tx.delivery.updateMany({
+          where: profile
+            ? {
+                id: deliveryId,
+                partnerId: null,
+                status: DeliveryStatus.ASSIGNED,
+              }
+            : {
+                id: deliveryId,
+                partnerId: null,
+                claimedByStaffId: null,
+                status: DeliveryStatus.ASSIGNED,
+              },
+          data: profile
+            ? {
+                partnerId: profile.id,
+                status: DeliveryStatus.EN_ROUTE_TO_PICKUP,
+              }
+            : {
+                claimedByStaffId: userId,
+                status: DeliveryStatus.EN_ROUTE_TO_PICKUP,
+              },
+        });
+
+        if (taken.count !== 1) {
+          throw new ConflictException(
+            'This delivery has already been claimed',
+          );
+        }
 
         if (delivery.orderId) {
           await tx.order.update({
@@ -270,7 +365,10 @@ export class LogisticsService {
           },
         });
 
-        return updated;
+        return tx.delivery.findUniqueOrThrow({
+          where: { id: deliveryId },
+          include: DELIVERY_DETAIL_INCLUDE,
+        });
       },
     );
 
@@ -444,11 +542,15 @@ export class LogisticsService {
     deliveryId: string,
     dto: UpdateDeliveryStatusDto,
     userId?: string,
+    role?: string,
   ) {
     const delivery =
       await this.prisma.delivery.findUnique({
         where: {
           id: deliveryId,
+        },
+        include: {
+          order: { select: { type: true } },
         },
       });
 
@@ -458,9 +560,23 @@ export class LogisticsService {
       );
     }
 
-    // If called by a delivery partner, make sure
-    // they own this delivery.
-    if (userId) {
+    const runByAdmin = isRunByAdmin(delivery);
+
+    // Make sure the caller is the person who accepted this delivery:
+    // the admin for marketplace/laundry, the partner for food.
+    if (userId && runByAdmin) {
+      if (role !== StaffRole.ADMIN) {
+        throw new ForbiddenException(
+          'Marketplace and laundry deliveries are handled by admins',
+        );
+      }
+
+      if (delivery.claimedByStaffId !== userId) {
+        throw new BadRequestException(
+          'You are not assigned to this delivery',
+        );
+      }
+    } else if (userId) {
       const profile =
         await this.prisma.deliveryPartnerProfile.findUnique(
           {
@@ -488,7 +604,19 @@ export class LogisticsService {
       return delivery;
     }
 
-    if (NEXT_STATUS[delivery.status] !== dto.status) {
+    // Admin-run deliveries have no handover code for now, so the admin
+    // finishes them here. Food deliveries finish only through verify-code.
+    const isAllowedFinish =
+      runByAdmin &&
+      delivery.status === DeliveryStatus.EN_ROUTE_TO_CUSTOMER &&
+      dto.status === DeliveryStatus.DELIVERED;
+    const isAllowedStep =
+      NEXT_STATUS[delivery.status] === dto.status || isAllowedFinish;
+    const isAllowedFailure =
+      dto.status === DeliveryStatus.FAILED &&
+      FAILABLE_FROM.includes(delivery.status);
+
+    if (!isAllowedStep && !isAllowedFailure) {
       throw new BadRequestException(
         `Cannot change a delivery from ${delivery.status} to ${dto.status}`,
       );
@@ -504,7 +632,12 @@ export class LogisticsService {
         OrderStatus.OUT_FOR_DELIVERY,
 
       [DeliveryStatus.EN_ROUTE_TO_CUSTOMER]:
-        OrderStatus.OUT_FOR_DELIVERY
+        OrderStatus.OUT_FOR_DELIVERY,
+
+      // Only reachable for admin-run (marketplace) deliveries; food orders
+      // are marked delivered in verifyDeliveryCode.
+      [DeliveryStatus.DELIVERED]:
+        OrderStatus.DELIVERED,
     };
 
     const orderStatus =
@@ -623,28 +756,35 @@ export class LogisticsService {
   }
 
   /**
-   * Returns deliveries assigned to the current partner.
+   * Returns deliveries assigned to the current partner, or for an admin,
+   * the marketplace and laundry deliveries they accepted.
    */
-  async myDeliveries(userId: string) {
-    const profile =
-      await this.prisma.deliveryPartnerProfile.findUnique(
-        {
-          where: {
-            staffUserId: userId,
-          },
-        },
-      );
+  async myDeliveries(userId: string, role?: string) {
+    let where: Prisma.DeliveryWhereInput;
 
-    if (!profile) {
-      throw new NotFoundException(
-        'You are not registered as a delivery partner',
-      );
+    if (role === StaffRole.ADMIN) {
+      where = { claimedByStaffId: userId };
+    } else {
+      const profile =
+        await this.prisma.deliveryPartnerProfile.findUnique(
+          {
+            where: {
+              staffUserId: userId,
+            },
+          },
+        );
+
+      if (!profile) {
+        throw new NotFoundException(
+          'You are not registered as a delivery partner',
+        );
+      }
+
+      where = { partnerId: profile.id };
     }
 
     return this.prisma.delivery.findMany({
-      where: {
-        partnerId: profile.id,
-      },
+      where,
       include: {
         order: {
           include: {
