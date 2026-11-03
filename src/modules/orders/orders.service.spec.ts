@@ -85,3 +85,50 @@ describe('OrdersService.findMyOrders', () => {
     expect(out[1].delivery).toBeNull();
   });
 });
+
+describe('OrdersService.findOne delivery code', () => {
+  const order = (delivery: any) => ({ id: 'o1', customerId: 'u1', delivery });
+
+  it('returns the decrypted code without the stored secrets', async () => {
+    const { encryptDeliveryCode } = jest.requireActual('../../shared/utils/delivery-code-encryption');
+    const { svc, prisma } = setup([]);
+    prisma.order.findFirst = jest.fn().mockResolvedValue(
+      order({ id: 'd1', deliveryCodeHash: 'h', deliveryCodeEncrypted: encryptDeliveryCode('123456'), deliveryCodeUsed: false }),
+    );
+
+    const out: any = await svc.findOne('o1', 'u1');
+
+    expect(out.delivery.code).toBe('123456');
+    expect(JSON.stringify(out)).not.toMatch(/deliveryCodeHash|deliveryCodeEncrypted/);
+  });
+
+  it('issues a fresh code instead of failing when the stored one cannot be decrypted', async () => {
+    const { svc, prisma } = setup([]);
+    // Encrypted under a different key: valid format, wrong auth tag.
+    const foreign = `${'a'.repeat(24)}:${'b'.repeat(32)}:${'c'.repeat(12)}`;
+    prisma.order.findFirst = jest.fn().mockResolvedValue(
+      order({ id: 'd1', deliveryCodeHash: 'h', deliveryCodeEncrypted: foreign, deliveryCodeUsed: false }),
+    );
+    prisma.delivery.update = jest.fn().mockResolvedValue({});
+
+    const out: any = await svc.findOne('o1', 'u1');
+
+    expect(out.delivery.code).toMatch(/^\d{6}$/);
+    const { data } = prisma.delivery.update.mock.calls[0][0];
+    expect(data.deliveryCodeEncrypted).not.toBe(foreign);
+    expect(await require('bcrypt').compare(out.delivery.code, data.deliveryCodeHash)).toBe(true);
+  });
+
+  it('leaves the code out when an unreadable code was already used', async () => {
+    const { svc, prisma } = setup([]);
+    prisma.order.findFirst = jest.fn().mockResolvedValue(
+      order({ id: 'd1', deliveryCodeHash: 'h', deliveryCodeEncrypted: 'x:y:z', deliveryCodeUsed: true }),
+    );
+    prisma.delivery.update = jest.fn();
+
+    const out: any = await svc.findOne('o1', 'u1');
+
+    expect(out.delivery.code).toBeUndefined();
+    expect(prisma.delivery.update).not.toHaveBeenCalled();
+  });
+});

@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -25,6 +26,8 @@ import {
 
 @Injectable()
 export class OrdersService {
+  private readonly logger = new Logger(OrdersService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly marketplace: MarketplaceService,
@@ -349,14 +352,12 @@ export class OrdersService {
     let delivery = order.delivery;
 
     if (delivery?.deliveryCodeEncrypted) {
-      const code = decryptDeliveryCode(
-        delivery.deliveryCodeEncrypted,
-      );
+      const code = await this.revealDeliveryCode(delivery);
 
       delivery = {
         ...delivery,
         code,
-      } as typeof delivery & { code: string };
+      } as typeof delivery & { code?: string };
     }
 
     if (delivery) {
@@ -373,6 +374,40 @@ export class OrdersService {
     }
 
     return order;
+  }
+
+  /**
+   * The customer's delivery code in plain text. A code stored under another
+   * encryption key (the key was changed, or the order was created by a
+   * server with a different key) can't be read back. Rather than failing the
+   * whole order with a 500, the customer gets a fresh code: only they ever
+   * see it, and the rider checks whatever the customer reads out against the
+   * new hash. A code that was already used is simply left out.
+   */
+  private async revealDeliveryCode(delivery: {
+    id: string;
+    deliveryCodeEncrypted: string | null;
+    deliveryCodeUsed: boolean;
+  }): Promise<string | undefined> {
+    if (!delivery.deliveryCodeEncrypted) return undefined;
+    try {
+      return decryptDeliveryCode(delivery.deliveryCodeEncrypted);
+    } catch (error) {
+      this.logger.warn(
+        `Delivery ${delivery.id}: stored code could not be decrypted (${(error as Error).message})`,
+      );
+    }
+    if (delivery.deliveryCodeUsed) return undefined;
+
+    const code = randomInt(100000, 1000000).toString();
+    await this.prisma.delivery.update({
+      where: { id: delivery.id },
+      data: {
+        deliveryCodeHash: await bcrypt.hash(code, 10),
+        deliveryCodeEncrypted: encryptDeliveryCode(code),
+      },
+    });
+    return code;
   }
 
   async updateStatus(id: string, dto: UpdateOrderStatusDto) {
