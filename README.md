@@ -112,3 +112,23 @@ in the service, and the service talks to the database only through `PrismaServic
   `{ success: false, statusCode, error, path, timestamp }` on error.
 - Auth: `POST /auth/register`, `POST /auth/login` return `{ accessToken, user }`.
   Send `Authorization: Bearer <accessToken>` on subsequent requests.
+
+## Admin console endpoints
+
+ADMIN-only, read-only views across every customer (`src/modules/admin`).
+Lists take `?page=&pageSize=` (max 100) and answer
+`{ data: [...], page, pageSize, hasMore, total }`; unknown filter values are
+a 400.
+
+| Route | Filters |
+| --- | --- |
+| `GET /admin/orders` | `status` (OrderStatus), `type` (OrderType) |
+| `GET /admin/orders/:id` | — (any customer's order, with delivery timeline) |
+| `GET /admin/laundry-orders` | `status` (LaundryStatus) |
+| `GET /admin/deliveries` | `status` (DeliveryStatus) |
+| `GET /admin/payments` | `status` (PaymentStatus) |
+| `GET /admin/partners` | — (profile, active/completed deliveries, earnings) |
+
+Delivery handover-code secrets (`deliveryCodeHash`, `deliveryCodeEncrypted`,
+attempt counters) are never returned by any endpoint; see
+`src/shared/utils/delivery-secrets.ts`.
