@@ -19,6 +19,10 @@ import { UpdatePartnerStatusDto } from './dto/update-partner-status.dto';
 import { UpdateDeliveryStatusDto } from './dto/update-delivery-status.dto';
 import { UpdateRiderLocationDto } from './dto/update-rider-location.dto';
 import * as bcrypt from 'bcrypt';
+import {
+  stripDeliveriesSecrets,
+  stripDeliverySecrets,
+} from '../../shared/utils/delivery-secrets';
 // Short-distance deliveries go to walking partners, longer ones need a motorcycle.
 // Distance isn't tracked yet at the order level because GPS/maps are not part of
 // the current MVP.
@@ -198,8 +202,8 @@ export class LogisticsService {
    * Delivery partners only ever see FOOD deliveries. Marketplace and
    * laundry deliveries are visible to admins only.
    */
-  findUnassigned(role?: string) {
-    return this.prisma.delivery.findMany({
+  async findUnassigned(role?: string) {
+    const rows = await this.prisma.delivery.findMany({
       where: {
         partnerId: null,
         claimedByStaffId: null,
@@ -231,6 +235,7 @@ export class LogisticsService {
         createdAt: 'asc',
       },
     });
+    return stripDeliveriesSecrets(rows);
   }
 
   /**
@@ -385,7 +390,7 @@ export class LogisticsService {
       claimed.order?.customer?.id ?? claimed.laundryOrder?.customerId,
     );
 
-    return claimed;
+    return stripDeliverySecrets(claimed);
   }
 
   async verifyDeliveryCode(
@@ -540,7 +545,7 @@ export class LogisticsService {
       delivery.order?.customerId ?? delivery.laundryOrder?.customerId,
     );
 
-    return verified;
+    return stripDeliverySecrets(verified);
   }
 
   /**
@@ -576,7 +581,7 @@ export class LogisticsService {
 
     // A repeated tap (slow network, double press) is not an error.
     if (delivery.status === dto.status) {
-      return delivery;
+      return stripDeliverySecrets(delivery);
     }
 
     // Admin-run deliveries have no handover code for now, so the admin
@@ -697,7 +702,7 @@ export class LogisticsService {
       result.order?.customer?.id ?? result.laundryOrder?.customerId,
     );
 
-    return result;
+    return stripDeliverySecrets(result);
   }
 
   /**
@@ -854,7 +859,7 @@ export class LogisticsService {
       where = { partnerId: profile.id };
     }
 
-    return this.prisma.delivery.findMany({
+    const rows = await this.prisma.delivery.findMany({
       where,
       include: {
         order: {
@@ -882,6 +887,7 @@ export class LogisticsService {
         createdAt: 'desc',
       },
     });
+    return stripDeliveriesSecrets(rows);
   }
 
   /**

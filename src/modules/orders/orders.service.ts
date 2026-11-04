@@ -23,6 +23,7 @@ import {
   encryptDeliveryCode,
   decryptDeliveryCode,
 } from '../../shared/utils/delivery-code-encryption';
+import { stripDeliverySecrets } from '../../shared/utils/delivery-secrets';
 
 @Injectable()
 export class OrdersService {
@@ -436,6 +437,8 @@ export class OrdersService {
 
     this.events.emit('order.status.updated', updated);
 
-    return updated;
+    return updated.delivery
+      ? { ...updated, delivery: stripDeliverySecrets(updated.delivery) }
+      : updated;
   }
 }
