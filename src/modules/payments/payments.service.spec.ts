@@ -171,3 +171,54 @@ describe('PaymentsService settle / verify / webhook', () => {
     expect(provider.verify).not.toHaveBeenCalled();
   });
 });
+
+describe('PaymentsService.markCashCollected', () => {
+  const cash = { ...pending, method: 'CASH', reference: null };
+
+  it('marks a pending cash payment paid, records who collected it, and emits once', async () => {
+    const { svc, prisma, events } = setup();
+    prisma.payment.findUnique.mockResolvedValueOnce(cash).mockResolvedValueOnce({ ...cash, status: 'SUCCESSFUL' });
+    prisma.payment.updateMany.mockResolvedValue({ count: 1 });
+
+    const res = await svc.markCashCollected('p1', 'admin1');
+
+    expect(prisma.payment.updateMany).toHaveBeenCalledWith({
+      where: { id: 'p1', method: 'CASH', status: 'PENDING' },
+      data: expect.objectContaining({ status: 'SUCCESSFUL', provider: 'cash', providerRef: 'collected-by:admin1', paidAt: expect.any(Date) }),
+    });
+    expect(res?.status).toBe('SUCCESSFUL');
+    expect(events.emit).toHaveBeenCalledTimes(1);
+    expect(events.emit).toHaveBeenCalledWith('payment.successful', expect.objectContaining({ id: 'p1' }));
+  });
+
+  it('refuses non-cash, already settled, missing, and raced payments', async () => {
+    const { svc, prisma, events } = setup();
+    prisma.payment.findUnique.mockResolvedValueOnce(pending);
+    await expect(svc.markCashCollected('p1', 'a')).rejects.toBeInstanceOf(BadRequestException);
+
+    prisma.payment.findUnique.mockResolvedValueOnce({ ...cash, status: 'SUCCESSFUL' });
+    await expect(svc.markCashCollected('p1', 'a')).rejects.toBeInstanceOf(ConflictException);
+
+    prisma.payment.findUnique.mockResolvedValueOnce(null);
+    await expect(svc.markCashCollected('nope', 'a')).rejects.toBeInstanceOf(NotFoundException);
+
+    prisma.payment.findUnique.mockResolvedValueOnce(cash);
+    prisma.payment.updateMany.mockResolvedValueOnce({ count: 0 });
+    await expect(svc.markCashCollected('p1', 'a')).rejects.toBeInstanceOf(ConflictException);
+
+    expect(events.emit).not.toHaveBeenCalled();
+  });
+});
+
+describe('PaymentsController.markCashCollected', () => {
+  it('is ADMIN only', () => {
+    const { Reflector } = require('@nestjs/core');
+    const { GUARDS_METADATA } = require('@nestjs/common/constants');
+    const { PaymentsController } = require('./payments.controller');
+    const { RolesGuard } = require('../../shared/guards/roles.guard');
+    const { ROLES_KEY } = require('../../shared/decorators/roles.decorator');
+    const handler = PaymentsController.prototype.markCashCollected;
+    expect(new Reflector().get(ROLES_KEY, handler)).toEqual(['ADMIN']);
+    expect(Reflect.getMetadata(GUARDS_METADATA, handler)).toContain(RolesGuard);
+  });
+});
