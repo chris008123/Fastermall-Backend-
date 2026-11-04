@@ -23,6 +23,8 @@ const SAFE_STAFF_SELECT = {
   fullName: true,
   role: true,
   isVerified: true,
+  isActive: true,
+  deactivatedAt: true,
   createdAt: true,
 } as const;
 
@@ -40,6 +42,8 @@ export class StaffService {
 
     const passwordMatches = await bcrypt.compare(dto.password, staffUser.passwordHash);
     if (!passwordMatches) throw new UnauthorizedException('Invalid email or password');
+    // Checked after the password so a guesser can't learn the account exists.
+    if (!staffUser.isActive) throw new UnauthorizedException('This account has been deactivated');
 
     return this.buildAuthResponse(staffUser);
   }
@@ -133,6 +137,30 @@ export class StaffService {
     return { id, passwordReset: true };
   }
 
+  // Admin-only. Deactivated staff can't sign in and their tokens are refused
+  // (see JwtStrategy). History (deliveries, replies) is kept.
+  async setActive(id: string, isActive: boolean, actorId: string) {
+    if (!isActive && id === actorId) {
+      throw new BadRequestException("You can't deactivate your own account");
+    }
+    const target = await this.prisma.staffUser.findUnique({
+      where: { id },
+      select: { id: true, role: true, isActive: true },
+    });
+    if (!target) throw new NotFoundException('Staff account not found');
+
+    if (!isActive && target.role === 'ADMIN' && target.isActive) {
+      const activeAdmins = await this.prisma.staffUser.count({ where: { role: 'ADMIN', isActive: true } });
+      if (activeAdmins <= 1) throw new BadRequestException("You can't deactivate the last active admin");
+    }
+
+    return this.prisma.staffUser.update({
+      where: { id },
+      data: { isActive, deactivatedAt: isActive ? null : new Date() },
+      select: SAFE_STAFF_SELECT,
+    });
+  }
+
   private mapWriteError(e: unknown) {
     if (e instanceof Prisma.PrismaClientKnownRequestError) {
       if (e.code === 'P2025') return new NotFoundException('Staff account not found');
@@ -149,7 +177,7 @@ export class StaffService {
       },
     });
 
-    if (!staffUser) {
+    if (!staffUser || !staffUser.isActive) {
       throw new UnauthorizedException();
     }
 

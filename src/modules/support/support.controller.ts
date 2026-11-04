@@ -2,6 +2,7 @@ import { Body, Controller, Get, Param, Patch, Post, UseGuards } from '@nestjs/co
 import { SupportService } from './support.service';
 import { CreateTicketDto } from './dto/create-ticket.dto';
 import { UpdateTicketStatusDto } from './dto/update-ticket-status.dto';
+import { CreateTicketReplyDto } from './dto/create-ticket-reply.dto';
 import { JwtAuthGuard } from '../../shared/guards/jwt-auth.guard';
 import { RolesGuard } from '../../shared/guards/roles.guard';
 import { Roles } from '../../shared/decorators/roles.decorator';
@@ -35,5 +36,18 @@ export class SupportController {
   @Patch('tickets/:id/status')
   updateStatus(@Param('id') id: string, @Body() dto: UpdateTicketStatusDto) {
     return this.supportService.updateStatus(id, dto);
+  }
+
+  // Declared after 'tickets/all' so that path isn't read as an id.
+  @Get('tickets/:id')
+  findOne(@CurrentUser() user: { userId: string; role?: string }, @Param('id') id: string) {
+    return this.supportService.findOne(id, user);
+  }
+
+  @UseGuards(RolesGuard)
+  @Roles(StaffRole.ADMIN)
+  @Post('tickets/:id/replies')
+  reply(@CurrentUser() user: { userId: string }, @Param('id') id: string, @Body() dto: CreateTicketReplyDto) {
+    return this.supportService.reply(id, user.userId, dto.message);
   }
 }

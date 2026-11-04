@@ -91,6 +91,17 @@ export class NotificationsService {
     });
   }
 
+  @OnEvent('support.reply.created')
+  async onSupportReply(event: { ticketId: string; userId: string; subject: string }) {
+    await this.notifyCustomer(event.userId, {
+      title: 'Support replied',
+      body: `We replied to your ticket "${event.subject.slice(0, 60)}".`,
+      type: 'SUPPORT_REPLY',
+      data: { ticketId: event.ticketId },
+      channelId: CHANNELS.orders,
+    });
+  }
+
   @OnEvent('laundry.created')
   async onLaundryCreated(order: { customerId: string; id: string }) {
     await this.notifyCustomer(order.customerId, {

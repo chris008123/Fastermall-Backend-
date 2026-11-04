@@ -136,6 +136,16 @@ ADMIN-only actions:
 | `PATCH /payments/:id/cash-collected` | — | PENDING CASH payment → SUCCESSFUL (`provider: cash`, `providerRef: collected-by:<staffId>`); emits `payment.successful` |
 | `PATCH /staff/users/:id` | `fullName?`, `email?`, `phone?` (`""` clears phone) | Edit contact details; role can't be changed |
 | `PATCH /staff/users/:id/password` | `password` (min 8) | Set a new password; existing tokens stay valid until they expire |
+| `PATCH /staff/users/:id/active` | `isActive` (boolean) | Deactivate / reactivate. Deactivated staff can't log in and their tokens are refused at once. You can't deactivate yourself or the last active admin |
+| `POST /support/tickets/:id/replies` | `message` (1–5000) | Reply to a ticket; OPEN → IN_PROGRESS; CLOSED tickets refuse replies; customer is notified |
+
+`GET /support/tickets/:id` returns one ticket with its replies: admins can open
+any ticket (with the customer's contact details), customers only their own.
+
+Deactivation and replies need migration
+`20261104120000_staff_deactivation_and_ticket_replies`. Run
+`npx prisma migrate deploy` **before** deploying this code: Prisma selects the
+new columns on every staff lookup, so without them staff login fails.
 
 Delivery handover-code secrets (`deliveryCodeHash`, `deliveryCodeEncrypted`,
 attempt counters) are never returned by any endpoint; see
