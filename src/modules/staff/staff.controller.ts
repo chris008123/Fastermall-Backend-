@@ -6,6 +6,7 @@ import { CreateStaffDto } from './dto/create-staff.dto';
 import { BootstrapAdminDto } from './dto/bootstrap-admin.dto';
 import { UpdateStaffDto } from './dto/update-staff.dto';
 import { ResetStaffPasswordDto } from './dto/reset-staff-password.dto';
+import { SetStaffActiveDto } from './dto/set-staff-active.dto';
 import { JwtAuthGuard } from '../../shared/guards/jwt-auth.guard';
 import { RolesGuard } from '../../shared/guards/roles.guard';
 import { Roles } from '../../shared/decorators/roles.decorator';
@@ -61,5 +62,16 @@ export class StaffController {
   @Patch('users/:id/password')
   resetPassword(@Param('id') id: string, @Body() dto: ResetStaffPasswordDto) {
     return this.staffService.resetPassword(id, dto.password);
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(StaffRole.ADMIN)
+  @Patch('users/:id/active')
+  setActive(
+    @CurrentUser() user: { userId: string },
+    @Param('id') id: string,
+    @Body() dto: SetStaffActiveDto,
+  ) {
+    return this.staffService.setActive(id, dto.isActive, user.userId);
   }
 }

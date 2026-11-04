@@ -46,12 +46,16 @@ model StaffUser {
   fullName          String
   role              StaffRole
   isVerified        Boolean                 @default(false)
+  // Deactivated accounts can't sign in, and their existing tokens are refused.
+  isActive          Boolean                 @default(true)
+  deactivatedAt     DateTime?
   createdAt         DateTime                @default(now())
   updatedAt         DateTime                @updatedAt
   deliveryProfile   DeliveryPartnerProfile?
   notifications     Notification[]
   devices           Device[]
   claimedDeliveries Delivery[]
+  ticketReplies     SupportTicketReply[]
 
   @@map("staff_users")
 }
@@ -394,8 +398,23 @@ model SupportTicket {
   targetType String?
   targetId   String?
   reason     String?
+  replies    SupportTicketReply[]
 
   @@map("support_tickets")
+}
+
+// A staff answer on a support ticket. The customer is notified of each one.
+model SupportTicketReply {
+  id          String        @id @default(uuid())
+  ticketId    String
+  staffUserId String?
+  message     String
+  createdAt   DateTime      @default(now())
+  ticket      SupportTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  staffUser   StaffUser?    @relation(fields: [staffUserId], references: [id], onDelete: SetNull)
+
+  @@index([ticketId, createdAt])
+  @@map("support_ticket_replies")
 }
 
 enum StaffRole {
