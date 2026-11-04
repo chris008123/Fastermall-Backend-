@@ -3,15 +3,28 @@ import {
   ConflictException,
   ForbiddenException,
   Injectable,
+  NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import * as bcrypt from 'bcrypt';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../database/prisma.service';
 import { LoginStaffDto } from './dto/login-staff.dto';
 import { CreateStaffDto } from './dto/create-staff.dto';
 import { BootstrapAdminDto } from './dto/bootstrap-admin.dto';
+import { UpdateStaffDto } from './dto/update-staff.dto';
+
+const SAFE_STAFF_SELECT = {
+  id: true,
+  email: true,
+  phone: true,
+  fullName: true,
+  role: true,
+  isVerified: true,
+  createdAt: true,
+} as const;
 
 @Injectable()
 export class StaffService {
@@ -89,9 +102,43 @@ export class StaffService {
   }
 
   findAll() {
-    return this.prisma.staffUser.findMany({
-      select: { id: true, email: true, fullName: true, role: true, isVerified: true, createdAt: true },
-    });
+    return this.prisma.staffUser.findMany({ select: SAFE_STAFF_SELECT });
+  }
+
+  // Admin-only. Empty strings clear the phone; name and email can't be cleared.
+  async updateStaff(id: string, dto: UpdateStaffDto) {
+    const data: Prisma.StaffUserUpdateInput = {};
+    if (dto.fullName !== undefined) data.fullName = dto.fullName.trim();
+    if (dto.email !== undefined) data.email = dto.email.trim(); // login matches email exactly, as createStaff stores it
+    if (dto.phone !== undefined) data.phone = dto.phone.trim() || null;
+    if (data.fullName === '') throw new BadRequestException('Name cannot be empty');
+    if (Object.keys(data).length === 0) throw new BadRequestException('Nothing to update');
+
+    try {
+      return await this.prisma.staffUser.update({ where: { id }, data, select: SAFE_STAFF_SELECT });
+    } catch (e) {
+      throw this.mapWriteError(e);
+    }
+  }
+
+  // Admin-only. Sets a new password for a staff member who is locked out.
+  // Tokens already issued stay valid until they expire.
+  async resetPassword(id: string, password: string) {
+    const passwordHash = await bcrypt.hash(password, 10);
+    try {
+      await this.prisma.staffUser.update({ where: { id }, data: { passwordHash }, select: { id: true } });
+    } catch (e) {
+      throw this.mapWriteError(e);
+    }
+    return { id, passwordReset: true };
+  }
+
+  private mapWriteError(e: unknown) {
+    if (e instanceof Prisma.PrismaClientKnownRequestError) {
+      if (e.code === 'P2025') return new NotFoundException('Staff account not found');
+      if (e.code === 'P2002') return new ConflictException('Another staff account already uses this email or phone');
+    }
+    return e;
   }
 
   async getProfile(staffUserId: string) {

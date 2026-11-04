@@ -4,6 +4,7 @@ import {
   Get,
   Headers,
   Param,
+  Patch,
   Post,
   RawBodyRequest,
   Req,
@@ -16,6 +17,9 @@ import { PaymentsService } from './payments.service';
 import { InitializePaymentDto } from './dto/initialize-payment.dto';
 import { JwtAuthGuard } from '../../shared/guards/jwt-auth.guard';
 import { CurrentUser } from '../../shared/decorators/current-user.decorator';
+import { RolesGuard } from '../../shared/guards/roles.guard';
+import { Roles } from '../../shared/decorators/roles.decorator';
+import { StaffRole } from '@prisma/client';
 
 @Controller('payments')
 export class PaymentsController {
@@ -38,6 +42,14 @@ export class PaymentsController {
   @Get()
   findMine(@CurrentUser() user: { userId: string }) {
     return this.paymentsService.findMyPayments(user.userId);
+  }
+
+  // Admin: cash was handed over on delivery.
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(StaffRole.ADMIN)
+  @Patch(':id/cash-collected')
+  markCashCollected(@CurrentUser() user: { userId: string }, @Param('id') id: string) {
+    return this.paymentsService.markCashCollected(id, user.userId);
   }
 
   // Called by the payment provider, not the app: authenticated by signature.

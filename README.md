@@ -129,6 +129,14 @@ a 400.
 | `GET /admin/payments` | `status` (PaymentStatus) |
 | `GET /admin/partners` | — (profile, active/completed deliveries, earnings) |
 
+ADMIN-only actions:
+
+| Route | Body | Effect |
+| --- | --- | --- |
+| `PATCH /payments/:id/cash-collected` | — | PENDING CASH payment → SUCCESSFUL (`provider: cash`, `providerRef: collected-by:<staffId>`); emits `payment.successful` |
+| `PATCH /staff/users/:id` | `fullName?`, `email?`, `phone?` (`""` clears phone) | Edit contact details; role can't be changed |
+| `PATCH /staff/users/:id/password` | `password` (min 8) | Set a new password; existing tokens stay valid until they expire |
+
 Delivery handover-code secrets (`deliveryCodeHash`, `deliveryCodeEncrypted`,
 attempt counters) are never returned by any endpoint; see
 `src/shared/utils/delivery-secrets.ts`.

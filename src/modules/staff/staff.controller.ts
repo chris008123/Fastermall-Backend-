@@ -1,9 +1,11 @@
-import { Body, Controller, Get, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, Patch, Post, UseGuards } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 import { StaffService } from './staff.service';
 import { LoginStaffDto } from './dto/login-staff.dto';
 import { CreateStaffDto } from './dto/create-staff.dto';
 import { BootstrapAdminDto } from './dto/bootstrap-admin.dto';
+import { UpdateStaffDto } from './dto/update-staff.dto';
+import { ResetStaffPasswordDto } from './dto/reset-staff-password.dto';
 import { JwtAuthGuard } from '../../shared/guards/jwt-auth.guard';
 import { RolesGuard } from '../../shared/guards/roles.guard';
 import { Roles } from '../../shared/decorators/roles.decorator';
@@ -45,5 +47,19 @@ export class StaffController {
   @Get('users')
   findAll() {
     return this.staffService.findAll();
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(StaffRole.ADMIN)
+  @Patch('users/:id')
+  updateStaff(@Param('id') id: string, @Body() dto: UpdateStaffDto) {
+    return this.staffService.updateStaff(id, dto);
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(StaffRole.ADMIN)
+  @Patch('users/:id/password')
+  resetPassword(@Param('id') id: string, @Body() dto: ResetStaffPasswordDto) {
+    return this.staffService.resetPassword(id, dto.password);
   }
 }

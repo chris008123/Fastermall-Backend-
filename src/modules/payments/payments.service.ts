@@ -169,6 +169,33 @@ export class PaymentsService {
     });
   }
 
+  /**
+   * Admin records that cash was handed over for a CASH payment. Only a
+   * PENDING cash payment can be marked; the flip is conditional so two
+   * admins clicking at once can't both succeed. Emits payment.successful
+   * like an online payment (customer notification; delivery if missing).
+   */
+  async markCashCollected(paymentId: string, staffId: string) {
+    const payment = await this.prisma.payment.findUnique({ where: { id: paymentId } });
+    if (!payment) throw new NotFoundException('Payment not found');
+    if (payment.method !== 'CASH') {
+      throw new BadRequestException('Only cash payments can be marked as collected');
+    }
+    if (payment.status !== 'PENDING') {
+      throw new ConflictException(`This payment is already ${payment.status.toLowerCase()}`);
+    }
+
+    const flipped = await this.prisma.payment.updateMany({
+      where: { id: payment.id, method: 'CASH', status: 'PENDING' },
+      data: { status: 'SUCCESSFUL', paidAt: new Date(), provider: 'cash', providerRef: `collected-by:${staffId}` },
+    });
+    if (flipped.count !== 1) throw new ConflictException('This payment was just updated by someone else');
+
+    const fresh = await this.prisma.payment.findUnique({ where: { id: payment.id } });
+    if (fresh) this.events.emit('payment.successful', fresh);
+    return fresh;
+  }
+
   // ── internals ──────────────────────────────────────────────────────
 
   private async findOwnedPayment(userId: string, dto: InitializePaymentDto): Promise<PaymentRow> {
