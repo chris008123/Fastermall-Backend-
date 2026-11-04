@@ -10,6 +10,9 @@ export interface PushPayload {
   data?: Record<string, unknown>;
   // Android notification channel. Must match a channel the app creates.
   channelId?: string;
+  // Which per-device switch to honour when it differs from the channel
+  // (e.g. broadcasts use the default channel but respect "announcements").
+  filterAs?: string;
 }
 
 export interface PushTargets {
@@ -66,7 +69,7 @@ export class PushService {
       if (or.length === 0) return;
 
       const devices = await this.prisma.device.findMany({
-        where: { OR: or, ...categoryFilter(payload.channelId) },
+        where: { OR: or, ...categoryFilter(payload.filterAs ?? payload.channelId) },
         select: { token: true },
       });
       await this.send(

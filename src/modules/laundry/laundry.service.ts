@@ -1,4 +1,5 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, Optional } from '@nestjs/common';
+import { SettingsService } from '../settings/settings.service';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { PrismaService } from '../../database/prisma.service';
 import { CreateLaundryOrderDto } from './dto/create-laundry-order.dto';
@@ -18,6 +19,7 @@ export class LaundryService {
     private readonly prisma: PrismaService,
     private readonly events: EventEmitter2,
     private readonly addresses: AddressesService,
+    @Optional() private readonly settings?: SettingsService,
   ) {}
 
   async getCatalog() {
@@ -37,6 +39,9 @@ export class LaundryService {
       const existing = await this.findByIdempotencyKey(customerId, idempotencyKey);
       if (existing) return existing;
     }
+
+    // Maintenance mode (admin setting) stops new laundry orders.
+    await this.settings?.assertOrderingOpen();
 
     // A saved address is copied onto the order, so later edits to it don't
     // change where an existing order is collected from.
@@ -91,7 +96,8 @@ export class LaundryService {
       0,
     );
 
-    const deliveryFee = dto.pickupMode?.toLowerCase() === 'pickup' ? 5 : 0;
+    const pickupFee = this.settings ? await this.settings.get('laundryPickupFee') : 5;
+    const deliveryFee = dto.pickupMode?.toLowerCase() === 'pickup' ? pickupFee : 0;
 
     const totalAmount = laundryTotal + deliveryFee;
 

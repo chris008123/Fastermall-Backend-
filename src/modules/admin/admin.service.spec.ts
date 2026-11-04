@@ -1,7 +1,7 @@
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { GUARDS_METADATA } from '@nestjs/common/constants';
-import { StaffRole } from '@prisma/client';
+import { Prisma, StaffRole } from '@prisma/client';
 import { AdminService, pageParams } from './admin.service';
 import { AdminController } from './admin.controller';
 import { ROLES_KEY } from '../../shared/decorators/roles.decorator';
@@ -28,6 +28,12 @@ function setup() {
     payment: model([{ id: 'p1' }], 1),
     staffUser: model([]),
     driverEarning: model([]),
+    partnerPayout: model([]),
+    adminAuditLog: model([{ id: 'log1' }], 1),
+    deliveryPartnerProfile: model([]),
+    user: model([]),
+    product: model([]),
+    supportTicket: model([]),
   };
   return { svc: new AdminService(prisma), prisma };
 }
@@ -122,7 +128,8 @@ describe('AdminService.listPartners', () => {
     prisma.delivery.groupBy
       .mockResolvedValueOnce([{ partnerId: 'p1', _count: { _all: 2 } }]) // active
       .mockResolvedValueOnce([{ partnerId: 'p1', _count: { _all: 9 } }]); // completed
-    prisma.driverEarning.groupBy.mockResolvedValue([{ partnerId: 'p1', _sum: { amount: '135.00' } }]);
+    prisma.driverEarning.groupBy.mockResolvedValue([{ partnerId: 'p1', _sum: { amount: new Prisma.Decimal('135.00') } }]);
+    prisma.partnerPayout.groupBy.mockResolvedValue([{ partnerId: 'p1', _sum: { amount: new Prisma.Decimal('100.50') } }]);
 
     const [kofi, ama] = await svc.listPartners();
     expect(kofi).toMatchObject({
@@ -130,10 +137,12 @@ describe('AdminService.listPartners', () => {
       profile: { type: 'MOTORCYCLE', isAvailable: true, vehiclePlate: 'GR-1' },
       activeDeliveries: 2,
       completedDeliveries: 9,
-      totalEarnings: '135.00',
+      totalPaidOut: '100.5',
+      balance: '34.5',
     });
+    expect(String(kofi.totalEarnings)).toBe('135');
     expect(kofi).not.toHaveProperty('deliveryProfile');
-    expect(ama).toMatchObject({ profile: null, activeDeliveries: 0, completedDeliveries: 0, totalEarnings: '0' });
+    expect(ama).toMatchObject({ profile: null, activeDeliveries: 0, completedDeliveries: 0, totalEarnings: '0', totalPaidOut: '0', balance: '0' });
     expect(prisma.staffUser.findMany.mock.calls[0][0].select).not.toHaveProperty('passwordHash');
   });
 
@@ -170,5 +179,72 @@ describe('AdminController access', () => {
     expect(guard.canActivate(ctx({ userId: 'a', role: 'ADMIN' }))).toBe(true);
     expect(() => guard.canActivate(ctx({ userId: 'v', role: 'VENDOR' }))).toThrow();
     expect(() => guard.canActivate(ctx({ userId: 'c' }))).toThrow(); // customer token: no role claim
+  });
+});
+
+describe('AdminService.dashboardStats revenue', () => {
+  it('sums successful payments, the last 30 days, refunds, and fills all six months', async () => {
+    const { svc, prisma } = setup();
+    prisma.payment.aggregate = jest
+      .fn()
+      .mockResolvedValueOnce({ _sum: { amount: new Prisma.Decimal('1200.50') } })
+      .mockResolvedValueOnce({ _sum: { amount: new Prisma.Decimal('300') } })
+      .mockResolvedValueOnce({ _sum: { amount: null } });
+    prisma.$queryRaw = jest.fn().mockResolvedValue([{ month: '2026-09', amount: '450.00' }, { month: '2026-11', amount: '300.00' }]);
+
+    const res = await svc.dashboardStats(new Date('2026-11-04T12:00:00Z'));
+    expect(res).toMatchObject({ revenueTotal: '1200.5', revenueLast30Days: '300', refundedTotal: '0' });
+    expect(res.revenueByMonth).toEqual([
+      { month: '2026-06', amount: '0' },
+      { month: '2026-07', amount: '0' },
+      { month: '2026-08', amount: '0' },
+      { month: '2026-09', amount: '450.00' },
+      { month: '2026-10', amount: '0' },
+      { month: '2026-11', amount: '300.00' },
+    ]);
+    expect(prisma.payment.aggregate.mock.calls[0][0].where).toEqual({ status: 'SUCCESSFUL' });
+    expect(prisma.payment.aggregate.mock.calls[2][0].where).toEqual({ status: 'REFUNDED' });
+  });
+});
+
+describe('AdminService payouts', () => {
+  function withTx(earned: string | null, paid: string | null) {
+    const ctx = setup();
+    const tx: any = {
+      driverEarning: { aggregate: jest.fn().mockResolvedValue({ _sum: { amount: earned && new Prisma.Decimal(earned) } }) },
+      partnerPayout: {
+        aggregate: jest.fn().mockResolvedValue({ _sum: { amount: paid && new Prisma.Decimal(paid) } }),
+        create: jest.fn().mockImplementation(({ data }) => ({ id: 'po1', ...data })),
+      },
+    };
+    ctx.prisma.deliveryPartnerProfile.findUnique.mockResolvedValue({ id: 'p1' });
+    ctx.prisma.$transaction = jest.fn((fn: any, opts: any) => fn(tx));
+    return { ...ctx, tx };
+  }
+
+  it('records a payout up to the balance, serializably', async () => {
+    const { svc, prisma, tx } = withTx('150', '100');
+    const po = await svc.createPayout('s1', { amount: 50, reference: ' MM123 ' }, 'admin1');
+    expect(tx.partnerPayout.create.mock.calls[0][0].data).toMatchObject({ partnerId: 'p1', method: 'MOBILE_MONEY', reference: 'MM123', createdById: 'admin1' });
+    expect(String(po.amount)).toBe('50');
+    expect(prisma.$transaction.mock.calls[0][1]).toEqual({ isolationLevel: 'Serializable' });
+  });
+
+  it('refuses more than is owed, and unknown partners', async () => {
+    const { svc, prisma, tx } = withTx('150', '100');
+    await expect(svc.createPayout('s1', { amount: 50.01 }, 'a')).rejects.toBeInstanceOf(BadRequestException);
+    expect(tx.partnerPayout.create).not.toHaveBeenCalled();
+    prisma.deliveryPartnerProfile.findUnique.mockResolvedValue(null);
+    await expect(svc.createPayout('nope', { amount: 1 }, 'a')).rejects.toBeInstanceOf(NotFoundException);
+    await expect(svc.listPayouts('nope')).rejects.toBeInstanceOf(NotFoundException);
+  });
+});
+
+describe('AdminService.listAuditLogs', () => {
+  it('is paged newest first', async () => {
+    const { svc, prisma } = setup();
+    const res = await svc.listAuditLogs({ page: 1, pageSize: 50 });
+    expect(res).toMatchObject({ data: [{ id: 'log1' }], total: 1, hasMore: false });
+    expect(prisma.adminAuditLog.findMany.mock.calls[0][0].orderBy[0]).toEqual({ createdAt: 'desc' });
   });
 });

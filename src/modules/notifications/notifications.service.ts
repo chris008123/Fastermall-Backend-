@@ -23,6 +23,10 @@ interface NotifyInput {
 // Android notification channels. These ids must match the channels the app
 // creates with Notifications.setNotificationChannelAsync(...).
 const NOTIFICATION_LIST_LIMIT = 50;
+const BROADCAST_BATCH = 500;
+
+export const BROADCAST_AUDIENCES = ['CUSTOMERS', 'DELIVERY_PARTNER', 'VENDOR', 'LAUNDRY_STAFF', 'ADMIN', 'ALL_STAFF'] as const;
+export type BroadcastAudience = (typeof BROADCAST_AUDIENCES)[number];
 
 const CHANNELS = {
   orders: 'orders',
@@ -87,6 +91,27 @@ export class NotificationsService {
       body: `Your order ${shortRef(order.id)} is now ${label}.`,
       type: 'ORDER_STATUS_UPDATED',
       data: { orderId: order.id, status: order.status },
+      channelId: CHANNELS.orders,
+    });
+  }
+
+  @OnEvent('payment.refunded')
+  async onPaymentRefunded(payment: { orderId?: string | null; laundryOrderId?: string | null; method?: string }) {
+    let customerId: string | undefined;
+    if (payment.orderId) {
+      customerId = (await this.prisma.order.findUnique({ where: { id: payment.orderId } }))?.customerId;
+    } else if (payment.laundryOrderId) {
+      customerId = (await this.prisma.laundryOrder.findUnique({ where: { id: payment.laundryOrderId } }))?.customerId;
+    }
+    if (!customerId) return;
+    await this.notifyCustomer(customerId, {
+      title: 'Refund issued',
+      body:
+        payment.method === 'CASH'
+          ? 'Your cash payment has been refunded.'
+          : 'Your payment has been refunded. It can take a few days to reach your account.',
+      type: 'PAYMENT_REFUNDED',
+      data: { orderId: payment.orderId ?? undefined, laundryOrderId: payment.laundryOrderId ?? undefined },
       channelId: CHANNELS.orders,
     });
   }
@@ -296,6 +321,47 @@ export class NotificationsService {
       where: { token, ...this.ownerWhere(user) },
     });
     return { removed: result.count };
+  }
+
+  /**
+   * Admin broadcast: stores an in-app notification for everyone in the
+   * audience and pushes it to their devices (devices with announcements
+   * switched off are skipped for the push only). Deactivated staff are left
+   * out. Returns how many people it reached in the app.
+   */
+  async broadcast(audience: BroadcastAudience, title: string, body: string) {
+    const t = title.trim();
+    const b = body.trim();
+    if (!t || !b) throw new BadRequestException('Title and message are required');
+
+    const customers = audience === 'CUSTOMERS';
+    const ids = customers
+      ? (await this.prisma.user.findMany({ select: { id: true } })).map((u) => u.id)
+      : (
+          await this.prisma.staffUser.findMany({
+            where: { isActive: true, ...(audience === 'ALL_STAFF' ? {} : { role: audience as StaffRole }) },
+            select: { id: true },
+          })
+        ).map((s) => s.id);
+
+    for (let i = 0; i < ids.length; i += BROADCAST_BATCH) {
+      const batch = ids.slice(i, i + BROADCAST_BATCH);
+      await this.prisma.notification.createMany({
+        data: batch.map((id) => ({
+          ...(customers ? { userId: id } : { staffUserId: id }),
+          title: t,
+          body: b,
+          type: 'ANNOUNCEMENT',
+        })),
+      });
+      void this.push.sendToOwners(customers ? { userIds: batch } : { staffUserIds: batch }, {
+        title: t,
+        body: b,
+        data: { type: 'ANNOUNCEMENT' },
+        filterAs: 'offers',
+      });
+    }
+    return { audience, recipients: ids.length };
   }
 
   // ───────── Internals ─────────

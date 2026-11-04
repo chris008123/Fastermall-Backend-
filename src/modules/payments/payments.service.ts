@@ -196,6 +196,38 @@ export class PaymentsService {
     return fresh;
   }
 
+  /**
+   * Admin refund of a SUCCESSFUL payment. Online payments are refunded
+   * through the provider first (nothing is marked if it refuses); cash is
+   * marked refunded once the admin has handed the money back. The order's
+   * own status is left to the admin. Emits payment.refunded.
+   */
+  async refund(paymentId: string, staffId: string, reason?: string) {
+    const payment = await this.prisma.payment.findUnique({ where: { id: paymentId } });
+    if (!payment) throw new NotFoundException('Payment not found');
+    if (payment.status !== 'SUCCESSFUL') {
+      throw new ConflictException(`Only successful payments can be refunded (this one is ${payment.status.toLowerCase()})`);
+    }
+
+    const online = payment.method !== 'CASH' && payment.provider !== 'cash';
+    let providerRefund: string | null = null;
+    if (online) {
+      if (!payment.reference) throw new BadRequestException('This payment has no provider reference to refund');
+      const result = await this.provider.refund(payment.reference, reason);
+      providerRefund = result.refundReference ?? result.status;
+    }
+
+    const flipped = await this.prisma.payment.updateMany({
+      where: { id: payment.id, status: 'SUCCESSFUL' },
+      data: { status: 'REFUNDED' },
+    });
+    if (flipped.count !== 1) throw new ConflictException('This payment was just updated by someone else');
+
+    const fresh = await this.prisma.payment.findUnique({ where: { id: payment.id } });
+    this.events.emit('payment.refunded', { ...fresh, refundedBy: staffId, reason: reason ?? null, providerRefund });
+    return { ...fresh, providerRefund };
+  }
+
   // ── internals ──────────────────────────────────────────────────────
 
   private async findOwnedPayment(userId: string, dto: InitializePaymentDto): Promise<PaymentRow> {

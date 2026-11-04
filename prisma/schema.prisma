@@ -72,6 +72,7 @@ model DeliveryPartnerProfile {
   deliveries   Delivery[]
   staffUser    StaffUser           @relation(fields: [staffUserId], references: [id])
   earnings     DriverEarning[]
+  payouts      PartnerPayout[]
 
   @@map("delivery_partner_profiles")
 }
@@ -324,6 +325,51 @@ model DriverEarning {
   partner   DeliveryPartnerProfile @relation(fields: [partnerId], references: [id])
 
   @@map("driver_earnings")
+}
+
+// Money actually paid out to a partner (recorded by an admin after sending
+// it, e.g. by mobile money). Balance = sum(earnings) - sum(payouts).
+model PartnerPayout {
+  id          String                 @id @default(uuid())
+  partnerId   String
+  amount      Decimal                @db.Decimal(10, 2)
+  method      String                 @default("MOBILE_MONEY")
+  reference   String?
+  note        String?
+  createdById String
+  createdAt   DateTime               @default(now())
+  partner     DeliveryPartnerProfile @relation(fields: [partnerId], references: [id])
+
+  @@index([partnerId, createdAt])
+  @@map("partner_payouts")
+}
+
+// Editable platform settings, one row per key. Missing keys use the
+// defaults in src/modules/settings/settings.service.ts.
+model PlatformSetting {
+  key         String   @id
+  value       Json
+  updatedById String?
+  updatedAt   DateTime @updatedAt
+
+  @@map("platform_settings")
+}
+
+// Every successful change an admin makes through the API. Staff id and name
+// are copied so the record survives the account being removed.
+model AdminAuditLog {
+  id         String   @id @default(uuid())
+  staffId    String
+  staffName  String?
+  action     String
+  targetType String?
+  targetId   String?
+  details    Json?
+  createdAt  DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([staffId, createdAt])
+  @@map("admin_audit_logs")
 }
 
 model Payment {

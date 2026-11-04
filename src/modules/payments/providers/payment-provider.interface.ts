@@ -37,10 +37,19 @@ export interface WebhookEvent {
   reference?: string;
 }
 
+export interface RefundResult {
+  /** Provider's refund id, when it gives one. */
+  refundReference?: string;
+  /** e.g. pending / processed — refunds settle asynchronously. */
+  status: string;
+}
+
 export interface PaymentProvider {
   readonly name: string;
   initialize(input: InitializeInput): Promise<InitializeResult>;
   verify(reference: string): Promise<VerifyResult>;
+  /** Full refund of a successful transaction. Throws if the provider refuses. */
+  refund(reference: string, note?: string): Promise<RefundResult>;
   verifyWebhookSignature(rawBody: Buffer | string | undefined, signature: string | undefined): boolean;
   parseWebhook(body: any): WebhookEvent | null;
 }

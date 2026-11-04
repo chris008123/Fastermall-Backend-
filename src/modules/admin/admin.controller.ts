@@ -1,4 +1,8 @@
-import { Controller, Get, Param, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post, Query, UseGuards } from '@nestjs/common';
+import { NotificationsService } from '../notifications/notifications.service';
+import { CurrentUser } from '../../shared/decorators/current-user.decorator';
+import { BroadcastDto } from './dto/broadcast.dto';
+import { CreatePayoutDto } from './dto/create-payout.dto';
 import { AdminService } from './admin.service';
 import { AdminListQueryDto } from './dto/admin-list-query.dto';
 import { JwtAuthGuard } from '../../shared/guards/jwt-auth.guard';
@@ -6,13 +10,17 @@ import { RolesGuard } from '../../shared/guards/roles.guard';
 import { Roles } from '../../shared/decorators/roles.decorator';
 import { StaffRole } from '@prisma/client';
 
-// Read-only views across every customer, for the admin console. Status
-// changes still go through each module's own PATCH route.
+// Views across every customer for the admin console, plus partner payouts,
+// broadcasts and the audit log. Status changes go through each module's own
+// PATCH route.
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(StaffRole.ADMIN)
 @Controller('admin')
 export class AdminController {
-  constructor(private readonly adminService: AdminService) {}
+  constructor(
+    private readonly adminService: AdminService,
+    private readonly notifications: NotificationsService,
+  ) {}
 
   @Get('dashboard')
   dashboard() {
@@ -56,5 +64,31 @@ export class AdminController {
   @Get('partners')
   listPartners() {
     return this.adminService.listPartners();
+  }
+
+  // :staffId is the partner's staff account id (as in GET /admin/partners).
+  @Get('partners/:staffId/payouts')
+  listPayouts(@Param('staffId') staffId: string) {
+    return this.adminService.listPayouts(staffId);
+  }
+
+  @Post('partners/:staffId/payouts')
+  createPayout(
+    @CurrentUser() user: { userId: string },
+    @Param('staffId') staffId: string,
+    @Body() dto: CreatePayoutDto,
+  ) {
+    return this.adminService.createPayout(staffId, dto, user.userId);
+  }
+
+  @Post('notifications/broadcast')
+  broadcast(@Body() dto: BroadcastDto) {
+    return this.notifications.broadcast(dto.audience, dto.title, dto.body);
+  }
+
+  // ?page=1&pageSize=50
+  @Get('audit-logs')
+  listAuditLogs(@Query() query: AdminListQueryDto) {
+    return this.adminService.listAuditLogs(query);
   }
 }

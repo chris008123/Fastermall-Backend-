@@ -1,6 +1,6 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
-import { APP_GUARD } from '@nestjs/core';
+import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { EventEmitterModule } from '@nestjs/event-emitter';
 import configuration from './config/configuration';
@@ -19,6 +19,8 @@ import { SupportModule } from './modules/support/support.module';
 import { AdminModule } from './modules/admin/admin.module';
 import { AddressesModule } from './modules/addresses/addresses.module';
 import { EmailModule } from './shared/email/email.module';
+import { SettingsModule } from './modules/settings/settings.module';
+import { AuditInterceptor } from './shared/interceptors/audit.interceptor';
 
 @Module({
   imports: [
@@ -26,6 +28,7 @@ import { EmailModule } from './shared/email/email.module';
     ThrottlerModule.forRoot([{ ttl: 60000, limit: 300 }]),
     EventEmitterModule.forRoot(),
     PrismaModule,
+    SettingsModule,
 
     IdentityModule, // customer-facing app
     StaffModule,    // staff-facing app: vendors, delivery partners, laundry staff, admins
@@ -45,6 +48,8 @@ import { EmailModule } from './shared/email/email.module';
     // Without this guard the throttler is configured but never enforced.
     // Sensitive routes (login, OTP, reset) add stricter @Throttle limits.
     { provide: APP_GUARD, useClass: ThrottlerGuard },
+    // Records every successful admin change (see audit.interceptor.ts).
+    { provide: APP_INTERCEPTOR, useClass: AuditInterceptor },
   ],
 })
 export class AppModule {}

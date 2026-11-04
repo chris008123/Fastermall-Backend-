@@ -132,3 +132,15 @@ describe('OrdersService.findOne delivery code', () => {
     expect(prisma.delivery.update).not.toHaveBeenCalled();
   });
 });
+
+describe('OrdersService maintenance mode', () => {
+  it('refuses new orders while maintenance mode is on', async () => {
+    const { ServiceUnavailableException } = require('@nestjs/common');
+    const { OrdersService } = require('./orders.service');
+    const prisma: any = { order: { findUnique: jest.fn().mockResolvedValue(null), create: jest.fn() } };
+    const settings = { assertOrderingOpen: jest.fn().mockRejectedValue(new ServiceUnavailableException('Back soon')), get: jest.fn() };
+    const svc = new OrdersService(prisma, {} as any, {} as any, { emit: jest.fn() } as any, { get: jest.fn() } as any, {} as any, settings as any);
+    await expect(svc.createOrder('c1', { type: 'MARKETPLACE', items: [{ productId: 'p', quantity: 1 }] } as any)).rejects.toThrow('Back soon');
+    expect(prisma.order.create).not.toHaveBeenCalled();
+  });
+});
