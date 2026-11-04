@@ -139,6 +139,23 @@ ADMIN-only actions:
 | `PATCH /staff/users/:id/active` | `isActive` (boolean) | Deactivate / reactivate. Deactivated staff can't log in and their tokens are refused at once. You can't deactivate yourself or the last active admin |
 | `POST /support/tickets/:id/replies` | `message` (1–5000) | Reply to a ticket; OPEN → IN_PROGRESS; CLOSED tickets refuse replies; customer is notified |
 
+| `POST /payments/:id/refund` | `reason?` | Full refund of a SUCCESSFUL payment: online payments go back through Paystack first; cash is marked refunded. Emits `payment.refunded` (customer notified) |
+| `GET /admin/partners/:staffId/payouts` | — | A partner's payouts |
+| `POST /admin/partners/:staffId/payouts` | `amount`, `method?`, `reference?`, `note?` | Record money sent to a partner; can't exceed their balance (earned − paid out) |
+| `POST /admin/notifications/broadcast` | `audience` (CUSTOMERS, DELIVERY_PARTNER, VENDOR, LAUNDRY_STAFF, ADMIN, ALL_STAFF), `title`, `body` | In-app notification + push to everyone in the audience |
+| `GET /admin/audit-logs` | `page`, `pageSize` | Every successful admin write (AuditInterceptor), secrets redacted |
+| `GET/PATCH /admin/settings` | `marketplaceDeliveryFee`, `laundryPickupFee`, `partnerEarningPerDelivery`, `maintenanceMode`, `maintenanceMessage` | Platform settings; missing values use the defaults in `settings.service.ts` |
+
+`GET /settings` (public) returns the fees and maintenance state for the apps.
+`GET /admin/dashboard` also returns `revenueTotal`, `revenueLast30Days`,
+`refundedTotal` and `revenueByMonth` (last six months), counting SUCCESSFUL
+payments. `GET /admin/partners` adds `totalPaidOut` and `balance`.
+
+Payouts, settings and the audit log need migration
+`20261104150000_payouts_settings_audit_log` (new tables only). Until it runs,
+settings fall back to their defaults and audit writes are skipped, so ordering
+and login keep working; the partner list and payouts fail.
+
 `GET /support/tickets/:id` returns one ticket with its replies: admins can open
 any ticket (with the customer's contact details), customers only their own.
 

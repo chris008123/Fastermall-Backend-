@@ -4,6 +4,7 @@ import {
   ForbiddenException,
   Injectable,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 import { EventEmitter2, OnEvent } from '@nestjs/event-emitter';
 import {
@@ -15,6 +16,7 @@ import {
 } from '@prisma/client';
 
 import { PrismaService } from '../../database/prisma.service';
+import { SettingsService } from '../settings/settings.service';
 import { UpdatePartnerStatusDto } from './dto/update-partner-status.dto';
 import { UpdateDeliveryStatusDto } from './dto/update-delivery-status.dto';
 import { UpdateRiderLocationDto } from './dto/update-rider-location.dto';
@@ -112,6 +114,7 @@ export class LogisticsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly events: EventEmitter2,
+    @Optional() private readonly settings?: SettingsService,
   ) {}
 
   // Tells Notifications that a delivery moved forward, so the customer can be
@@ -484,6 +487,9 @@ export class LogisticsService {
       );
     }
 
+    // Read before the transaction: an admin setting, default 15.
+    const earningAmount = this.settings ? await this.settings.get('partnerEarningPerDelivery') : 15;
+
     const verified = await this.prisma.$transaction(
       async (tx) => {
         const updated =
@@ -529,7 +535,7 @@ export class LogisticsService {
             await tx.driverEarning.create({
               data: {
                 partnerId: delivery.partnerId,
-                amount: 15,
+                amount: earningAmount,
                 note: `Delivery ${deliveryId}`,
               },
             });

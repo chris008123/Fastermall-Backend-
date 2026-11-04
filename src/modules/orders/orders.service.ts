@@ -3,7 +3,9 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
+import { SettingsService } from '../settings/settings.service';
 import { ConfigService } from '@nestjs/config';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { OrderType } from '@prisma/client';
@@ -36,6 +38,7 @@ export class OrdersService {
     private readonly events: EventEmitter2,
     private readonly config: ConfigService,
     private readonly addresses: AddressesService,
+    @Optional() private readonly settings?: SettingsService,
   ) {}
 
   async createOrder(
@@ -52,6 +55,10 @@ export class OrdersService {
       });
       if (existing) return this.findOne(existing.id, customerId);
     }
+
+    // Maintenance mode (admin setting) stops new orders; retries above still
+    // get their original order back.
+    await this.settings?.assertOrderingOpen();
 
     // A saved address is copied onto the order, so later edits to it don't
     // change where an existing order goes.
@@ -166,7 +173,9 @@ export class OrdersService {
       dto.type === OrderType.FOOD
         ? serverDeliveryFee
         : dto.type === OrderType.MARKETPLACE
-          ? Number(this.config.get<number>('orders.marketplaceDeliveryFee') ?? 0)
+          ? this.settings
+            ? await this.settings.get('marketplaceDeliveryFee')
+            : Number(this.config.get<number>('orders.marketplaceDeliveryFee') ?? 0)
           : 0;
 
     const totalAmount = subtotal + deliveryFee;

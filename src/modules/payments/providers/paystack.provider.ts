@@ -4,6 +4,7 @@ import {
   InitializeInput,
   InitializeResult,
   PaymentProvider,
+  RefundResult,
   VerifyResult,
   WebhookEvent,
 } from './payment-provider.interface';
@@ -88,6 +89,19 @@ export class PaystackProvider implements PaymentProvider {
       amount: fromMinor(Number(d.amount)),
       currency: String(d.currency),
       providerReference: d.id !== undefined ? String(d.id) : undefined,
+    };
+  }
+
+  // Full refund. Paystack queues it and settles to the customer's card or
+  // wallet over the following days.
+  async refund(reference: string, note?: string): Promise<RefundResult> {
+    const json = await this.call<any>('/refund', {
+      method: 'POST',
+      body: JSON.stringify({ transaction: reference, merchant_note: note, customer_note: note }),
+    });
+    return {
+      refundReference: json.data?.id !== undefined ? String(json.data.id) : undefined,
+      status: String(json.data?.status ?? 'pending'),
     };
   }
 

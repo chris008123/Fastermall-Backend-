@@ -3,6 +3,7 @@ import {
   InitializeInput,
   InitializeResult,
   PaymentProvider,
+  RefundResult,
   VerifyResult,
   WebhookEvent,
 } from './payment-provider.interface';
@@ -26,6 +27,10 @@ export class MockProvider implements PaymentProvider {
     const known = this.seen.get(reference);
     if (!known) return { status: 'failed', amount: 0, currency: 'GHS' };
     return { status: 'success', ...known, providerReference: `MOCK-${reference}` };
+  }
+
+  async refund(reference: string): Promise<RefundResult> {
+    return { refundReference: `MOCK-REFUND-${reference}`, status: 'processed' };
   }
 
   verifyWebhookSignature(): boolean {

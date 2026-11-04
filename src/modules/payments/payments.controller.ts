@@ -15,6 +15,7 @@ import { SkipThrottle, Throttle } from '@nestjs/throttler';
 import type { Request, Response } from 'express';
 import { PaymentsService } from './payments.service';
 import { InitializePaymentDto } from './dto/initialize-payment.dto';
+import { RefundPaymentDto } from './dto/refund-payment.dto';
 import { JwtAuthGuard } from '../../shared/guards/jwt-auth.guard';
 import { CurrentUser } from '../../shared/decorators/current-user.decorator';
 import { RolesGuard } from '../../shared/guards/roles.guard';
@@ -50,6 +51,14 @@ export class PaymentsController {
   @Patch(':id/cash-collected')
   markCashCollected(@CurrentUser() user: { userId: string }, @Param('id') id: string) {
     return this.paymentsService.markCashCollected(id, user.userId);
+  }
+
+  // Admin: full refund. Online payments go back through the provider.
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(StaffRole.ADMIN)
+  @Post(':id/refund')
+  refund(@CurrentUser() user: { userId: string }, @Param('id') id: string, @Body() dto: RefundPaymentDto) {
+    return this.paymentsService.refund(id, user.userId, dto.reason);
   }
 
   // Called by the payment provider, not the app: authenticated by signature.

@@ -222,3 +222,47 @@ describe('PaymentsController.markCashCollected', () => {
     expect(Reflect.getMetadata(GUARDS_METADATA, handler)).toContain(RolesGuard);
   });
 });
+
+describe('PaymentsService.refund', () => {
+  const paidOnline = { ...pending, status: 'SUCCESSFUL', method: 'CARD', provider: 'paystack', reference: 'FM-1' };
+  const paidCash = { ...pending, status: 'SUCCESSFUL', method: 'CASH', provider: 'cash', reference: null };
+
+  it('refunds online payments through the provider first, then marks them refunded', async () => {
+    const { svc, prisma, provider, events } = setup();
+    (provider as any).refund = jest.fn().mockResolvedValue({ refundReference: 'RF1', status: 'pending' });
+    prisma.payment.findUnique.mockResolvedValueOnce(paidOnline).mockResolvedValueOnce({ ...paidOnline, status: 'REFUNDED' });
+    prisma.payment.updateMany.mockResolvedValue({ count: 1 });
+
+    const res = await svc.refund('p1', 'admin1', 'Wrong item');
+    expect((provider as any).refund).toHaveBeenCalledWith('FM-1', 'Wrong item');
+    expect(prisma.payment.updateMany).toHaveBeenCalledWith({ where: { id: 'p1', status: 'SUCCESSFUL' }, data: { status: 'REFUNDED' } });
+    expect(res).toMatchObject({ status: 'REFUNDED', providerRefund: 'RF1' });
+    expect(events.emit).toHaveBeenCalledWith('payment.refunded', expect.objectContaining({ refundedBy: 'admin1', reason: 'Wrong item' }));
+  });
+
+  it("marks cash refunded without calling the provider; nothing changes if the provider refuses", async () => {
+    const { svc, prisma, provider } = setup();
+    (provider as any).refund = jest.fn();
+    prisma.payment.findUnique.mockResolvedValueOnce(paidCash).mockResolvedValueOnce({ ...paidCash, status: 'REFUNDED' });
+    prisma.payment.updateMany.mockResolvedValue({ count: 1 });
+    await svc.refund('p1', 'a');
+    expect((provider as any).refund).not.toHaveBeenCalled();
+
+    prisma.payment.updateMany.mockClear();
+    (provider as any).refund = jest.fn().mockRejectedValue(new Error('provider rejected'));
+    prisma.payment.findUnique.mockResolvedValueOnce(paidOnline);
+    await expect(svc.refund('p1', 'a')).rejects.toThrow('provider rejected');
+    expect(prisma.payment.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('only successful payments can be refunded', async () => {
+    const { svc, prisma, events } = setup();
+    prisma.payment.findUnique.mockResolvedValueOnce(pending);
+    await expect(svc.refund('p1', 'a')).rejects.toBeInstanceOf(ConflictException);
+    prisma.payment.findUnique.mockResolvedValueOnce({ ...paidOnline, status: 'REFUNDED' });
+    await expect(svc.refund('p1', 'a')).rejects.toBeInstanceOf(ConflictException);
+    prisma.payment.findUnique.mockResolvedValueOnce(null);
+    await expect(svc.refund('x', 'a')).rejects.toBeInstanceOf(NotFoundException);
+    expect(events.emit).not.toHaveBeenCalled();
+  });
+});
