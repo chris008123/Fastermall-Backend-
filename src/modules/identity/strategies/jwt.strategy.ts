@@ -2,6 +2,7 @@ import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { PassportStrategy } from '@nestjs/passport';
 import { ExtractJwt, Strategy } from 'passport-jwt';
 import { ConfigService } from '@nestjs/config';
+import { StaffRole } from '@prisma/client';
 import { PrismaService } from '../../../database/prisma.service';
 
 export interface JwtPayload {
@@ -24,10 +25,12 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
   }
 
   async validate(payload: JwtPayload) {
-    // Staff tokens carry a role; customer tokens don't. A staff token stops
-    // working as soon as the account is deactivated or deleted, without
-    // waiting for it to expire.
-    if (payload.role) {
+    // Staff tokens carry a StaffRole; customer tokens carry role 'CUSTOMER'
+    // (see IdentityService.buildAuthResponse). A staff token stops working as
+    // soon as the account is deactivated or deleted, without waiting for it
+    // to expire. Customers must not go through this check: they have no
+    // staff_users row, so it would reject every customer request.
+    if (payload.role && Object.values(StaffRole).includes(payload.role as StaffRole)) {
       const staff = await this.prisma.staffUser.findUnique({
         where: { id: payload.sub },
         select: { isActive: true },
