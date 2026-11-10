@@ -127,12 +127,13 @@ Each feature is planned as its own branch, merged into `main`, following the exi
 - [ ] Reuse the same service for food vendor/menu images and laundry vendor logos later.
 - [ ] Migration.
 
-### 2.1 Promotions `[ ]`
-- [ ] Add a `Promotion` model: `title`, `subtitle?`, `body?`, `imageUrl?`, `ctaLabel?`, `ctaTarget?` (product, category, vendor or URL), `theme` (JSON for colours or animation preset), `startsAt`, `endsAt`, `isActive`, `priority`, timestamps.
-- [ ] Public `GET /promotions/active`: the promotions that are live now, highest priority first. The app shows the popup from this.
-- [ ] Admin CRUD: `GET/POST /admin/promotions`, `PATCH/DELETE /admin/promotions/:id`, with image upload through the `StorageService`.
-- [ ] Optional: a `promotion.published` broadcast push.
-- [ ] Migration.
+### 2.1 Promotions `[x]`
+- [x] `Promotion` model with content, button (`ctaType` PRODUCT/CATEGORY/VENDOR/FOOD_VENDOR/URL/NONE), `theme` (colours and animation preset, including `float3d`), schedule, priority, popup `frequency` and `announcedAt`. Migration `20261110230000_add_promotions`.
+- [x] Public `GET /promotions/active`: live ones only, by priority, at most 10, without admin fields.
+- [x] Admin CRUD with a status filter. The button target is validated (it must exist, and URLs must be https). Image upload goes to the public `promotion-images` bucket. Audited.
+- [x] `POST /admin/promotions/:id/announce` pushes to customers (`type: PROMOTION`), live promotions only, once per 12 h, safe against double clicks and retriable if the push fails.
+- [x] Verified: unit tests; migration with no drift; HTTP run of create, schedule, bad button, public list, announce (twice), the customer notification and deactivation.
+- [ ] Decided by default (requirement left it open): admins manage promotions. The 3D look and animation themselves are drawn by the app; the backend only stores the preset.
 
 ### 2.12A Customizable food orders `[ ]`
 - [ ] Add `MenuItemOptionGroup` (`name`, `minSelect`, `maxSelect`, `isRequired`, `sortOrder`) and `MenuItemOption` (`name`, `price`, `isAvailable`). This covers the Gɔbɛ example (beans GH₵5 / GH₵7, plantain GH₵5 / GH₵6, extras: sausage, egg).
@@ -221,3 +222,4 @@ After each step: `npm test`, `npm run build`, then update this log, `README.md` 
 | 10 Nov 2026 | 2.4 Notifications | Broadcast channel fix, test-push diagnostics, partner jobUpdates/payments/sound switches live. 548 tests pass; app booted against a throwaway DB and the new routes answered. No migration. |
 | 10 Nov 2026 | 2.8 Delivery windows | Built on `main`. 583 tests pass; migration and full reschedule flow verified against a throwaway Postgres. |
 | 10 Nov 2026 | 2.2 Product images | Built on `main`. 601 tests pass; upload route checked over HTTP without touching the real Supabase project. |
+| 10 Nov 2026 | 2.1 Promotions | Built on `main`. Tests pass; routes verified over HTTP on a throwaway Postgres. |

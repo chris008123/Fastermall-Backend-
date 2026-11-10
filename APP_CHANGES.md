@@ -490,3 +490,32 @@ Customer app:
 - `imageUrl` is still there and is always the first photo, so screens that only use `imageUrl` work unchanged. Use `images` for a gallery.
 - `GET /marketplace/products/:id/images` (public) returns the same list.
 - The bundled fallback image is only needed while `imageUrl` is `null`.
+
+## Promotions popup (2.1)
+
+Needs migration `20261110230000_add_promotions` (new table and two enums only). Uploaded popup images go to the public bucket `promotion-images` (created on first upload; `PROMOTION_IMAGES_BUCKET` to change it).
+
+Customer app:
+
+- On launch, call `GET /promotions/active` (no login). It returns live promotions, highest `priority` first, at most 10. Show the first as the popup (the rest can be a carousel). Each has:
+  - **Text and image:** `id`, `title`, `subtitle`, `body`, `imageUrl`.
+  - **Button:** `ctaLabel`, `ctaType`, `ctaValue`. See the button table below.
+  - **Look:** `theme`, e.g. `{ background, textColor, accentColor, animation }`, where `animation` is one of `none`, `fade`, `slide`, `bounce`, `confetti`, `float3d`. This is where the 3D and animated presentation is styled.
+  - **Schedule:** `startsAt`, `endsAt`.
+  - **Popup frequency:** `ONCE`, `DAILY` or `EVERY_OPEN`. The app tracks which ids it has shown; also use `updatedAt` to show an edited promotion again.
+- Button: open the product / category / vendor / food vendor with id `ctaValue`, or the https link for `URL`. `NONE` means no button.
+- When an admin announces a promotion, customers get a push and an in-app notification with `type: "PROMOTION"` and `data.promotionId`. Opening it should show that promotion.
+
+Admin console:
+
+| Route | Body / query | Notes |
+| --- | --- | --- |
+| `GET /admin/promotions` | `?status=live\|scheduled\|ended\|inactive` | Each row has `status` |
+| `GET /admin/promotions/:id` | | |
+| `POST /admin/promotions` | `title` (required), `subtitle?`, `body?`, `imageUrl?` (https), `ctaType?`, `ctaValue?`, `ctaLabel?`, `theme?`, `startsAt?` (default now), `endsAt?` (null = no end), `isActive?`, `priority?` 0–1000, `frequency?` | The button target must exist (400 `INVALID_CTA`); the end must be after the start |
+| `PATCH /admin/promotions/:id` | any of the above | `isActive: false` hides it at once |
+| `DELETE /admin/promotions/:id` | | Removes the uploaded image too |
+| `POST /admin/promotions/:id/image` | multipart, field `image` | JPEG, PNG or WebP; replaces the old one |
+| `POST /admin/promotions/:id/announce` | | Push to all customers (their "announcements" switch is respected). Live promotions only (409 `PROMOTION_NOT_LIVE`), at most once per 12 hours (409 `ALREADY_ANNOUNCED`) |
+
+All admin changes appear in the audit log.

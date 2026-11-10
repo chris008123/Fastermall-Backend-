@@ -772,3 +772,52 @@ model ProductImage {
   @@index([productId, sortOrder])
   @@map("product_images")
 }
+
+enum PromotionCtaType {
+  NONE
+  PRODUCT
+  CATEGORY
+  VENDOR
+  FOOD_VENDOR
+  URL
+}
+
+enum PromotionFrequency {
+  ONCE
+  DAILY
+  EVERY_OPEN
+}
+
+// A promotion shown as a popup when the app opens (requirement 2.1). Live
+// while isActive and now is between startsAt and endsAt (open-ended if null).
+model Promotion {
+  id          String             @id @default(uuid())
+  title       String
+  subtitle    String?
+  body        String?
+  imageUrl    String?
+  // Path in the promotion-images bucket when the image was uploaded here.
+  imagePath   String?
+  // What the button opens.
+  ctaLabel    String?
+  ctaType     PromotionCtaType   @default(NONE)
+  ctaValue    String?
+  // Colours and animation preset for the popup, e.g.
+  // { "background": "#0B1D51", "accent": "#FFC83D", "animation": "float3d" }.
+  theme       Json?
+  startsAt    DateTime
+  endsAt      DateTime?
+  isActive    Boolean            @default(true)
+  // Higher shows first when several are live.
+  priority    Int                @default(0)
+  // How often the app shows the popup to the same person.
+  frequency   PromotionFrequency @default(ONCE)
+  // When it was last pushed to customers (POST /admin/promotions/:id/announce).
+  announcedAt DateTime?
+  createdById String?
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
+
+  @@index([isActive, startsAt, endsAt])
+  @@map("promotions")
+}

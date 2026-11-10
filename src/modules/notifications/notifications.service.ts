@@ -555,7 +555,14 @@ export class NotificationsService {
    * switched off are skipped for the push only). Deactivated staff are left
    * out. Returns how many people it reached in the app.
    */
-  async broadcast(audience: BroadcastAudience, title: string, body: string) {
+  async broadcast(
+    audience: BroadcastAudience,
+    title: string,
+    body: string,
+    // Optional: a different type (e.g. PROMOTION) and data the app routes taps with.
+    extra: { type?: string; data?: Record<string, string> } = {},
+  ) {
+    const type = extra.type ?? 'ANNOUNCEMENT';
     const t = title.trim();
     const b = body.trim();
     if (!t || !b) throw new BadRequestException('Title and message are required');
@@ -577,13 +584,14 @@ export class NotificationsService {
           ...(customers ? { userId: id } : { staffUserId: id }),
           title: t,
           body: b,
-          type: 'ANNOUNCEMENT',
+          type,
+          ...(extra.data ? { data: extra.data } : {}),
         })),
       });
       void this.push.sendToOwners(customers ? { userIds: batch } : { staffUserIds: batch }, {
         title: t,
         body: b,
-        data: { type: 'ANNOUNCEMENT' },
+        data: { type, ...(extra.data ?? {}) },
         // Before: no channel, so Android used Expo's fallback channel, which
         // shows no popup. Now the same channel as every other push for that
         // app (customers: orders, staff: deliveries). The "announcements"

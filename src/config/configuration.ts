@@ -6,6 +6,10 @@ export default () => ({
     maxBytes: parseInt(process.env.PRODUCT_IMAGE_MAX_BYTES || String(5 * 1024 * 1024), 10),
     maxPerProduct: parseInt(process.env.PRODUCT_IMAGES_MAX || '5', 10),
   },
+  promotionImages: {
+    // PUBLIC Supabase bucket, created automatically on first upload.
+    bucket: process.env.PROMOTION_IMAGES_BUCKET || 'promotion-images',
+  },
   documents: {
     bucket: process.env.DOCUMENTS_BUCKET || 'partner-documents',
     maxBytes: parseInt(process.env.DOCUMENT_MAX_BYTES || String(5 * 1024 * 1024), 10),
