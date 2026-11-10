@@ -11,23 +11,42 @@ const SECRET_KEYS = [
   'deliveryCodeLockedUntil',
 ] as const;
 
-type SecretKey = (typeof SECRET_KEYS)[number];
+// Live maps and location tracking were removed from the apps (Nov 2026).
+// The columns are kept so the feature can return later, but no delivery
+// response carries coordinates or the rider's position any more.
+export const DELIVERY_LOCATION_KEYS = [
+  'pickupLat',
+  'pickupLng',
+  'dropoffLat',
+  'dropoffLng',
+  'riderLat',
+  'riderLng',
+  'riderLocationAt',
+] as const;
 
-/** Copy of a delivery row without the handover-code secrets. */
-export function stripDeliverySecrets<T extends object>(delivery: T): Omit<T, SecretKey & keyof T> {
+const HIDDEN_KEYS = [...SECRET_KEYS, ...DELIVERY_LOCATION_KEYS] as const;
+
+type HiddenKey = (typeof HIDDEN_KEYS)[number];
+
+/**
+ * Copy of a delivery row without the handover-code secrets and without
+ * location fields (see DELIVERY_LOCATION_KEYS).
+ */
+export function stripDeliverySecrets<T extends object>(delivery: T): Omit<T, HiddenKey & keyof T> {
   const out = { ...delivery } as Record<string, unknown>;
-  for (const key of SECRET_KEYS) delete out[key];
-  return out as Omit<T, SecretKey & keyof T>;
+  for (const key of HIDDEN_KEYS) delete out[key];
+  return out as Omit<T, HiddenKey & keyof T>;
 }
 
 /** Same, for a list. */
-export function stripDeliveriesSecrets<T extends object>(rows: T[]): Omit<T, SecretKey & keyof T>[] {
+export function stripDeliveriesSecrets<T extends object>(rows: T[]): Omit<T, HiddenKey & keyof T>[] {
   return rows.map(stripDeliverySecrets);
 }
 
 /**
- * Prisma select for a delivery's own columns, minus the secrets. Use this
- * when a delivery is nested inside another record (order, laundry order).
+ * Prisma select for a delivery's own columns, minus the secrets and the
+ * location fields. Use this when a delivery is nested inside another record
+ * (order, laundry order).
  */
 export const SAFE_DELIVERY_SELECT = {
   id: true,
@@ -36,16 +55,9 @@ export const SAFE_DELIVERY_SELECT = {
   partnerId: true,
   claimedByStaffId: true,
   status: true,
-  pickupLat: true,
-  pickupLng: true,
-  dropoffLat: true,
-  dropoffLng: true,
   distanceKm: true,
   deliveryCodeUsed: true,
   verifiedAt: true,
-  riderLat: true,
-  riderLng: true,
-  riderLocationAt: true,
   createdAt: true,
   updatedAt: true,
 } satisfies Prisma.DeliverySelect;

@@ -2,6 +2,7 @@ import {
   Body,
   Controller,
   Get,
+  GoneException,
   Param,
   Patch,
   Post,
@@ -20,8 +21,10 @@ import { CurrentUser } from '../../shared/decorators/current-user.decorator';
 
 import { StaffRole } from '@prisma/client';
 import { VerifyDeliveryCodeDto } from './dto/verify-delivery-code.dto';
-import { UpdateRiderLocationDto } from './dto/update-rider-location.dto';
-import { Throttle } from '@nestjs/throttler';
+import { SkipThrottle, Throttle } from '@nestjs/throttler';
+
+export const RIDER_LOCATION_REMOVED_MESSAGE =
+  'Location sharing has been removed. Update the app to the latest version.';
 
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(StaffRole.DELIVERY_PARTNER, StaffRole.ADMIN)
@@ -91,23 +94,14 @@ export class LogisticsController {
   }
 
   /**
-   * Rider's current position, for the customer's tracking map.
-   * The app should send it about every 10 seconds while a delivery is
-   * in progress; the limit leaves room for retries.
+   * Removed: live maps and rider location tracking were taken out of the
+   * apps (Nov 2026). Kept as a route so older app versions get a clear 410
+   * instead of a 404, and stop retrying.
    */
-  @Throttle({ default: { limit: 20, ttl: 60_000 } })
+  @SkipThrottle()
   @Patch('deliveries/:id/location')
-  updateRiderLocation(
-    @Param('id') id: string,
-    @Body() dto: UpdateRiderLocationDto,
-    @CurrentUser() user: { userId: string; role: string },
-  ) {
-    return this.logisticsService.updateRiderLocation(
-      id,
-      dto,
-      user.userId,
-      user.role,
-    );
+  updateRiderLocation() {
+    throw new GoneException(RIDER_LOCATION_REMOVED_MESSAGE);
   }
 
   /**
