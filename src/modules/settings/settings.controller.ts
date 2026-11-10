@@ -6,6 +6,7 @@ import { JwtAuthGuard } from '../../shared/guards/jwt-auth.guard';
 import { RolesGuard } from '../../shared/guards/roles.guard';
 import { Roles } from '../../shared/decorators/roles.decorator';
 import { CurrentUser } from '../../shared/decorators/current-user.decorator';
+import { ACCEPTED_PAYMENT_METHODS } from '../payments/payment-methods';
 
 @Controller()
 export class SettingsController {
@@ -20,6 +21,8 @@ export class SettingsController {
       laundryPickupFee: s.laundryPickupFee,
       maintenanceMode: s.maintenanceMode,
       maintenanceMessage: s.maintenanceMode ? s.maintenanceMessage : null,
+      // The checkout options the app should offer. Cash is not among them.
+      acceptedPaymentMethods: [...ACCEPTED_PAYMENT_METHODS],
     };
   }
 

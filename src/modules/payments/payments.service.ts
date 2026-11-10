@@ -12,6 +12,7 @@ import { EventEmitter2, OnEvent } from '@nestjs/event-emitter';
 import { randomUUID } from 'crypto';
 import { PrismaService } from '../../database/prisma.service';
 import { InitializePaymentDto } from './dto/initialize-payment.dto';
+import { ACCEPTED_PAYMENT_METHODS, CASH_REMOVED_MESSAGE } from './payment-methods';
 import {
   PAYMENT_PROVIDER,
   PaymentChannel,
@@ -61,11 +62,16 @@ export class PaymentsService {
   }
 
   /**
-   * Starts a payment for one of the caller's own orders.
-   * - CASH: the payment stays PENDING (collected on delivery).
-   * - CARD / MOBILE_MONEY: returns a hosted checkout URL from the provider.
+   * Starts a payment for one of the caller's own orders. CARD and
+   * MOBILE_MONEY return a hosted checkout URL from the provider. CASH is no
+   * longer accepted (the DTO refuses it too; this check also covers direct
+   * calls). A payment still marked CASH from before the change can be paid
+   * online here: its method is switched to the one chosen now.
    */
   async initialize(userId: string, dto: InitializePaymentDto) {
+    if (!(ACCEPTED_PAYMENT_METHODS as readonly string[]).includes(dto.method)) {
+      throw new BadRequestException(CASH_REMOVED_MESSAGE);
+    }
     if (!!dto.orderId === !!dto.laundryOrderId) {
       throw new BadRequestException('Provide exactly one of orderId or laundryOrderId');
     }
@@ -77,14 +83,6 @@ export class PaymentsService {
     }
 
     const amount = Number(payment.amount);
-
-    if (dto.method === 'CASH') {
-      await this.prisma.payment.update({
-        where: { id: payment.id },
-        data: { method: 'CASH', status: 'PENDING', reference: null, provider: null },
-      });
-      return { method: 'CASH', status: 'PENDING', amount };
-    }
 
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
     if (!user?.email) throw new BadRequestException('Your account needs an email address to pay online');
@@ -170,6 +168,9 @@ export class PaymentsService {
   }
 
   /**
+   * @deprecated Cash payments were removed (Nov 2026). Kept only so admins
+   * can settle CASH payments chosen before the change; no new ones are made.
+   *
    * Admin records that cash was handed over for a CASH payment. Only a
    * PENDING cash payment can be marked; the flip is conditional so two
    * admins clicking at once can't both succeed. Emits payment.successful

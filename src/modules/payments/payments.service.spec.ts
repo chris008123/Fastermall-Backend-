@@ -75,14 +75,51 @@ describe('PaymentsService.initialize', () => {
     expect(out.reference).toMatch(/^FM-/);
   });
 
-  it('keeps cash payments pending without calling the provider', async () => {
+  it('refuses cash without touching the payment or the provider', async () => {
     const { svc, prisma, provider } = setup();
     prisma.payment.findFirst.mockResolvedValue(pending);
 
-    const out = await svc.initialize('u1', { orderId: 'o1', method: 'CASH' } as any);
-
-    expect(out).toMatchObject({ method: 'CASH', status: 'PENDING' });
+    await expect(svc.initialize('u1', { orderId: 'o1', method: 'CASH' } as any)).rejects.toThrow(
+      /no longer available/,
+    );
+    expect(prisma.payment.findFirst).not.toHaveBeenCalled();
+    expect(prisma.payment.update).not.toHaveBeenCalled();
     expect(provider.initialize).not.toHaveBeenCalled();
+  });
+
+  it('lets a payment left as CASH from before the change be paid online', async () => {
+    const { svc, prisma, provider } = setup();
+    prisma.payment.findFirst.mockResolvedValue({ ...pending, method: 'CASH', reference: null });
+    prisma.user.findUnique.mockResolvedValue({ email: 'a@b.c' });
+
+    await svc.initialize('u1', { orderId: 'o1', method: 'MOBILE_MONEY' } as any);
+
+    expect(provider.initialize.mock.calls[0][0]).toMatchObject({ channels: ['mobile_money'] });
+    expect(prisma.payment.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ method: 'MOBILE_MONEY', status: 'PENDING' }) }),
+    );
+  });
+});
+
+describe('InitializePaymentDto', () => {
+  // Imported lazily so the decorators run against the real class-validator.
+  const { validate } = require('class-validator');
+  const { plainToInstance } = require('class-transformer');
+  const { InitializePaymentDto } = require('./dto/initialize-payment.dto');
+
+  const errorsFor = async (method: unknown) => {
+    const errors = await validate(plainToInstance(InitializePaymentDto, { orderId: 'o1', method }));
+    return errors.flatMap((e: any) => Object.values(e.constraints ?? {}));
+  };
+
+  it('accepts mobile money and card', async () => {
+    expect(await errorsFor('MOBILE_MONEY')).toEqual([]);
+    expect(await errorsFor('CARD')).toEqual([]);
+  });
+
+  it('rejects cash with a clear message, and unknown methods', async () => {
+    expect(await errorsFor('CASH')).toEqual([expect.stringMatching(/no longer available/)]);
+    expect(await errorsFor('BITCOIN')).toEqual([expect.stringMatching(/MOBILE_MONEY, CARD/)]);
   });
 });
 

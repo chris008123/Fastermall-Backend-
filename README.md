@@ -133,7 +133,7 @@ ADMIN-only actions:
 
 | Route | Body | Effect |
 | --- | --- | --- |
-| `PATCH /payments/:id/cash-collected` | — | PENDING CASH payment → SUCCESSFUL (`provider: cash`, `providerRef: collected-by:<staffId>`); emits `payment.successful` |
+| `PATCH /payments/:id/cash-collected` | — | **Deprecated** (cash was removed from checkout; only for cash payments chosen before Nov 2026). PENDING CASH payment → SUCCESSFUL (`provider: cash`, `providerRef: collected-by:<staffId>`); emits `payment.successful` |
 | `PATCH /staff/users/:id` | `fullName?`, `email?`, `phone?` (`""` clears phone) | Edit contact details; role can't be changed |
 | `PATCH /staff/users/:id/password` | `password` (min 8) | Set a new password; existing tokens stay valid until they expire |
 | `PATCH /staff/users/:id/active` | `isActive` (boolean) | Deactivate / reactivate. Deactivated staff can't log in and their tokens are refused at once. You can't deactivate yourself or the last active admin |
@@ -146,7 +146,9 @@ ADMIN-only actions:
 | `GET /admin/audit-logs` | `page`, `pageSize` | Every successful admin write (AuditInterceptor), secrets redacted |
 | `GET/PATCH /admin/settings` | `marketplaceDeliveryFee`, `laundryPickupFee`, `partnerEarningPerDelivery`, `maintenanceMode`, `maintenanceMessage` | Platform settings; missing values use the defaults in `settings.service.ts` |
 
-`GET /settings` (public) returns the fees and maintenance state for the apps.
+`GET /settings` (public) returns the fees, maintenance state and `acceptedPaymentMethods` (`MOBILE_MONEY`, `CARD`) for the apps.
+
+Cash payments are no longer accepted: `POST /payments/initialize` and `POST /orders` refuse any cash method with a 400 (see `src/modules/payments/payment-methods.ts`).
 `GET /admin/dashboard` also returns `revenueTotal`, `revenueLast30Days`,
 `refundedTotal` and `revenueByMonth` (last six months), counting SUCCESSFUL
 payments. `GET /admin/partners` adds `totalPaidOut` and `balance`.

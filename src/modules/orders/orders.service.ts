@@ -26,6 +26,7 @@ import {
   decryptDeliveryCode,
 } from '../../shared/utils/delivery-code-encryption';
 import { stripDeliverySecrets } from '../../shared/utils/delivery-secrets';
+import { normalizeOrderPaymentMethod } from '../payments/payment-methods';
 
 @Injectable()
 export class OrdersService {
@@ -74,6 +75,9 @@ export class OrdersService {
         'An order must contain at least one item',
       );
     }
+
+    // Cash was removed: any cash choice is refused before anything is saved.
+    const paymentMethod = normalizeOrderPaymentMethod(dto.paymentMethod);
 
     // dto.deliveryFee is still accepted (older app versions send it) but is
     // ignored: the fee is always read from the vendor on the server.
@@ -191,7 +195,7 @@ export class OrdersService {
         deliveryFee,
         vendorName: dto.vendorName,
         addressLabel,
-        paymentMethod: dto.paymentMethod,
+        paymentMethod,
         notes: dto.notes,
         items: { create: lineItems },
       },
