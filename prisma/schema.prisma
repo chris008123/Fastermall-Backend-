@@ -255,8 +255,18 @@ model Order {
   // Sent by the app as the Idempotency-Key header so a retried request
   // returns the first order instead of creating a second one.
   idempotencyKey String?
+  // Marketplace delivery window (see src/shared/utils/delivery-windows.ts).
+  // Assigned from the order time; the customer may move it to one of the two
+  // windows after the original one. Null for food orders and for orders
+  // placed before windows existed.
+  deliveryWindowStart DateTime?
+  deliveryWindowEnd   DateTime?
+  originalWindowStart DateTime?
+  rescheduledAt       DateTime?
+  rescheduleCount     Int       @default(0)
 
   @@unique([customerId, idempotencyKey])
+  @@index([deliveryWindowStart])
   @@map("orders")
 }
 

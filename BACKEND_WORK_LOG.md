@@ -71,18 +71,15 @@ Each feature is planned as its own branch, merged into `main`, following the exi
 - [x] Delivery App settings: master's `GET/PUT /logistics/me/preferences` already stored them. Now `jobUpdates` (accepted delivery cancelled) and `payments` (cash-out paid/failed, admin payout recorded) are acted on, `sound` applies to every partner push, and the in-app list always gets everything.
 - [ ] *App side (not backend):* create the `orders` and `deliveries` channels with MAX importance and sound, and set `Notifications.setNotificationHandler` so banners and sound show while the app is open. This is the most likely cause of "in the list but no popup". The exact code is in APP_CHANGES.md.
 
-### 2.8 Scheduled delivery windows and rescheduling `[ ]`
-- [ ] Add a pure, fully unit-tested helper `src/shared/utils/delivery-windows.ts`:
-  - `assignWindow(orderTime)`: before 09:00 → same day 10:00–12:00; 09:00–15:00 → same day 16:00–18:00; after 15:00 → next day 10:00–12:00.
-  - `nextWindows(window, 2)`: the next two consecutive windows (10–12 → 16–18 same day → 10–12 next day, and so on).
-  - All times in **Africa/Accra (UTC+0, no DST)**, stored as UTC.
-- [ ] Add fields to `Order`: `deliveryWindowStart`, `deliveryWindowEnd`, `originalWindowStart`, `rescheduledAt?`, `rescheduleCount`.
-- [ ] Set the window automatically in `POST /orders` for **marketplace** orders.
-- [ ] Return the window on `GET /orders` and `GET /orders/:id`.
-- [ ] `GET /orders/:id/delivery-windows`: return the current window plus the only allowed alternatives (the next two after the **original** window).
-- [ ] `PATCH /orders/:id/delivery-window` `{ windowStart }`: the server checks that it's one of the two allowed windows, and arbitrary dates are rejected. Emit an event so the customer and admins are notified.
-- [ ] Admin delivery lists show and sort by window (`GET /admin/orders`, `GET /logistics/deliveries/unassigned`).
-- [ ] Migration.
+### 2.8 Scheduled delivery windows and rescheduling `[x]`
+- [x] Helper `src/shared/utils/delivery-windows.ts` with the cut-offs (before 09:00 gives same-day morning; 09:00 to 14:59 gives same-day afternoon; 15:00 or later gives next morning), next windows, labels in Ghana time, and 14 unit tests including the requirement's 8/9 Nov example.
+- [x] `Order` fields `deliveryWindowStart/End`, `originalWindowStart`, `rescheduledAt`, `rescheduleCount`. Migration `20261110180000_add_delivery_windows` has nullable columns only.
+- [x] Marketplace orders get their window when they are created. Order responses include `deliveryWindow` with a label.
+- [x] `GET /orders/:id/delivery-windows` returns the original plus the next two, with availability and the reason when rescheduling is blocked.
+- [x] `PATCH /orders/:id/delivery-window` refuses any other date. It is allowed until the current window starts, while the order is pending, confirmed or preparing, and before pickup. The write is atomic (409 `ORDER_CHANGED` on a race). The customer is notified, and so is the admin who accepted the delivery.
+- [x] `GET /admin/orders?deliveryDate=YYYY-MM-DD` returns a day's deliveries sorted by window.
+- [x] Verified on a throwaway Postgres: no drift. End-to-end run: an order placed at 20:37 got the next morning, the reschedule worked, an arbitrary date was refused, and the notification arrived.
+- [ ] *Open (2.8 pending decision):* windows run every day including weekends, there is no capacity limit per window, and food orders don't get windows. Change these if operations want otherwise.
 
 ### 2.2 Product image upload `[ ]`
 - [ ] Add a `StorageService` (shared) using Supabase Storage with the service-role key. Uploads go to a public `product-images` bucket.
@@ -185,3 +182,4 @@ After each step: `npm test`, `npm run build`, then update this log, `README.md` 
 | 10 Nov 2026 | Merge `origin/master` into `main` | Partner-app branch (88 commits) merged on `merge-master`; 19 conflicts resolved, duplicates unified (support replies, partner payouts, staff deactivation). Live location from that branch disabled to match 2.6. Lost code restored (customer lockout, vendor-owner schema, security headers); missing account-deletion feature removed from routes. Migrations verified on a throwaway Postgres for fresh, main-history and master-history databases (no drift). Tests and build pass. `backup-connecting-to-frontend` left unmerged (superseded first-version backup). |
 | 10 Nov 2026 | 2.13 WhatsApp contact + 2.14 FAQ | Built directly on `main` (no branches from now on, per user). Unit tests added; migration, seed and routes verified against a throwaway Postgres. |
 | 10 Nov 2026 | 2.4 Notifications | Broadcast channel fix, test-push diagnostics, partner jobUpdates/payments/sound switches live. 548 tests pass; app booted against a throwaway DB and the new routes answered. No migration. |
+| 10 Nov 2026 | 2.8 Delivery windows | Built on `main`. 583 tests pass; migration and full reschedule flow verified against a throwaway Postgres. |

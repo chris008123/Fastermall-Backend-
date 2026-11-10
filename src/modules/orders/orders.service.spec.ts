@@ -30,6 +30,14 @@ const dto = (extra: any = {}) => ({
   ...extra,
 }) as any;
 
+describe('OrdersService food orders', () => {
+  it('get no delivery window (they are delivered straight away)', async () => {
+    const { svc, created } = setup([item('m1', 'v1', 10)]);
+    await svc.createOrder('u1', dto());
+    expect(created[0]).not.toHaveProperty('deliveryWindowStart');
+  });
+});
+
 describe('OrdersService food delivery fee', () => {
   it('uses the vendor fee and ignores the fee the app sends', async () => {
     const { svc, created } = setup([item('m1', 'v1', 10)]);
@@ -159,6 +167,17 @@ describe('OrdersService stock handling', () => {
     (s.svc as any).marketplace = marketplace;
     return { ...s, marketplace };
   }
+
+  it('gives a marketplace order its delivery window from the order time (Ghana = UTC)', async () => {
+    const { svc, created } = marketplaceSetup();
+    (svc as any).now = () => new Date('2026-11-08T13:45:00Z'); // 1:45 PM -> same-day 4–6 PM
+    await svc.createOrder('u1', { type: 'MARKETPLACE', items: [{ productId: 'p1', quantity: 1 }] } as any);
+    expect(created[0]).toMatchObject({
+      deliveryWindowStart: new Date('2026-11-08T16:00:00Z'),
+      deliveryWindowEnd: new Date('2026-11-08T18:00:00Z'),
+      originalWindowStart: new Date('2026-11-08T16:00:00Z'),
+    });
+  });
 
   it('merges duplicate lines so the stock check sees the real total', async () => {
     const { svc, marketplace } = marketplaceSetup();

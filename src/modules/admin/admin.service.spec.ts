@@ -75,6 +75,7 @@ describe('AdminService lists', () => {
     expect(prisma.order.count.mock.calls[0][0].where).toEqual({ status: 'PENDING', type: 'FOOD' });
 
     expect(() => svc.listOrders({ status: 'SHIPPED' })).toThrow(BadRequestException);
+    expect(() => svc.listOrders({ deliveryDate: '2026-13-45' })).toThrow(BadRequestException);
     expect(() => svc.listOrders({ type: 'LAUNDRY' })).toThrow(BadRequestException);
     expect(() => svc.listLaundryOrders({ status: 'PENDING' })).toThrow(BadRequestException);
     expect(() => svc.listDeliveries({ status: 'LOST' })).toThrow(BadRequestException);
@@ -282,5 +283,15 @@ describe('AdminService.listAuditLogs', () => {
     const res = await svc.listAuditLogs({ page: 1, pageSize: 50 });
     expect(res).toMatchObject({ data: [{ id: 'log1' }], total: 1, hasMore: false });
     expect(prisma.adminAuditLog.findMany.mock.calls[0][0].orderBy[0]).toEqual({ createdAt: 'desc' });
+  });
+});
+
+describe('AdminService.listOrders by delivery day', () => {
+  it('returns the deliveries for that Ghana day, by window then oldest', async () => {
+    const { svc, prisma } = setup();
+    await svc.listOrders({ deliveryDate: '2026-11-08' });
+    const arg = prisma.order.findMany.mock.calls[0][0];
+    expect(arg.where.deliveryWindowStart).toEqual({ gte: new Date('2026-11-08T00:00:00Z'), lt: new Date('2026-11-09T00:00:00Z') });
+    expect(arg.orderBy[0]).toEqual({ deliveryWindowStart: 'asc' });
   });
 });

@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   Injectable,
   Logger,
   NotFoundException,
@@ -10,7 +11,7 @@ import {
 import { SettingsService } from '../settings/settings.service';
 import { ConfigService } from '@nestjs/config';
 import { EventEmitter2 } from '@nestjs/event-emitter';
-import { OrderStatus, OrderType } from '@prisma/client';
+import { DeliveryStatus, OrderStatus, OrderType } from '@prisma/client';
 import { PrismaService } from '../../database/prisma.service';
 import { MarketplaceService } from '../marketplace/marketplace.service';
 import { FoodService } from '../food/food.service';
@@ -32,6 +33,13 @@ import {
   stripDeliverySecrets,
 } from '../../shared/utils/delivery-secrets';
 import { normalizeOrderPaymentMethod } from '../payments/payment-methods';
+import {
+  allowedWindows,
+  assignWindow,
+  DeliveryWindow,
+  presentWindow,
+  windowStartingAt,
+} from '../../shared/utils/delivery-windows';
 
 // Largest quantity of one product/menu item in a single order.
 const MAX_LINE_QUANTITY = 100;
@@ -39,6 +47,30 @@ const MAX_LINE_QUANTITY = 100;
 const EXPIRY_SWEEP_MS = 5 * 60 * 1000;
 // An online payment that was started but never finished is only expired after this long.
 const STARTED_PAYMENT_EXPIRY_MS = 24 * 60 * 60 * 1000;
+
+// A delivery can be moved while the order is still being prepared and the
+// rider has not picked it up yet.
+const RESCHEDULABLE_ORDER_STATUSES: OrderStatus[] = [
+  OrderStatus.PENDING,
+  OrderStatus.CONFIRMED,
+  OrderStatus.PREPARING,
+];
+const RESCHEDULABLE_DELIVERY_STATUSES: DeliveryStatus[] = [
+  DeliveryStatus.ASSIGNED,
+  DeliveryStatus.EN_ROUTE_TO_PICKUP,
+  DeliveryStatus.PAY_VENDOR,
+];
+
+type WindowFields = {
+  deliveryWindowStart?: Date | null;
+  deliveryWindowEnd?: Date | null;
+};
+
+/** Adds `deliveryWindow` ({ slot, start, end, label }, or null) to an order. */
+export function withDeliveryWindow<T extends WindowFields>(order: T) {
+  const window = order.deliveryWindowStart ? windowStartingAt(order.deliveryWindowStart) : null;
+  return { ...order, deliveryWindow: window ? presentWindow(window) : null };
+}
 
 @Injectable()
 export class OrdersService implements OnModuleInit, OnModuleDestroy {
@@ -54,6 +86,11 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
     private readonly addresses: AddressesService,
     @Optional() private readonly settings?: SettingsService,
   ) {}
+
+  /** The current time. A method so tests can pin it. */
+  protected now() {
+    return new Date();
+  }
 
   onModuleInit() {
     this.sweepTimer = setInterval(() => {
@@ -235,6 +272,11 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
 
     const totalAmount = subtotal + deliveryFee;
 
+    // Marketplace orders are delivered in a fixed window decided by the time
+    // the order is placed (food orders are delivered straight away).
+    const window =
+      dto.type === OrderType.MARKETPLACE ? assignWindow(this.now()) : null;
+
     // Take the stock first, atomically (all lines or none). If anything
     // below fails, give it back.
     const reserved =
@@ -270,6 +312,13 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
           paymentMethod,
           notes: dto.notes,
           items: { create: lineItems },
+          ...(window
+            ? {
+                deliveryWindowStart: window.start,
+                deliveryWindowEnd: window.end,
+                originalWindowStart: window.start,
+              }
+            : {}),
         },
       });
     } catch (error) {
@@ -350,7 +399,7 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
 
     this.events.emit('order.created', orderWithDelivery);
 
-    return orderWithDelivery;
+    return orderWithDelivery ? withDeliveryWindow(orderWithDelivery) : orderWithDelivery;
   }
 
   async findMyOrders(customerId: string) {
@@ -372,9 +421,11 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
     // The code secrets and location fields never leave the server. (A
     // customer sees their code only when opening one order.)
     return orders.map((order) =>
-      order.delivery
-        ? { ...order, delivery: stripDeliverySecrets(order.delivery) }
-        : order,
+      withDeliveryWindow(
+        order.delivery
+          ? { ...order, delivery: stripDeliverySecrets(order.delivery) }
+          : order,
+      ),
     );
   }
 
@@ -412,13 +463,152 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
     }
 
     if (delivery) {
-      return {
+      return withDeliveryWindow({
         ...order,
         delivery: stripDeliverySecrets(delivery),
-      };
+      });
     }
 
-    return order;
+    return withDeliveryWindow(order);
+  }
+
+  // ───────── Delivery windows (marketplace) ─────────
+
+  private async ownWindowedOrder(orderId: string, customerId: string) {
+    const order = await this.prisma.order.findFirst({
+      where: { id: orderId, customerId },
+      select: {
+        id: true,
+        type: true,
+        status: true,
+        deliveryWindowStart: true,
+        originalWindowStart: true,
+        rescheduleCount: true,
+        delivery: { select: { status: true, claimedByStaffId: true } },
+      },
+    });
+    if (!order) throw new NotFoundException('Order not found');
+
+    const current = order.deliveryWindowStart ? windowStartingAt(order.deliveryWindowStart) : null;
+    const original = order.originalWindowStart ? windowStartingAt(order.originalWindowStart) : null;
+    if (!current || !original) {
+      throw new BadRequestException({
+        message: 'This order has no delivery window',
+        code: 'NO_DELIVERY_WINDOW',
+      });
+    }
+    return { order, current, original };
+  }
+
+  // Why the delivery can't be moved right now, or null if it can.
+  private rescheduleBlocker(
+    order: { status: OrderStatus; delivery: { status: DeliveryStatus } | null },
+    current: DeliveryWindow,
+    now: Date,
+  ): { code: string; message: string } | null {
+    if (!RESCHEDULABLE_ORDER_STATUSES.includes(order.status)) {
+      return { code: 'ORDER_NOT_RESCHEDULABLE', message: `This order is ${order.status.toLowerCase().replace(/_/g, ' ')} and can no longer be rescheduled` };
+    }
+    if (order.delivery && !RESCHEDULABLE_DELIVERY_STATUSES.includes(order.delivery.status)) {
+      return { code: 'ALREADY_ON_THE_WAY', message: 'Your order has been picked up and can no longer be rescheduled' };
+    }
+    if (current.start.getTime() <= now.getTime()) {
+      return { code: 'WINDOW_STARTED', message: 'Your delivery window has already started, so it can no longer be changed' };
+    }
+    return null;
+  }
+
+  /**
+   * The delivery window and the only windows the customer may pick: the
+   * original one and the two after it. Windows that have already started
+   * are listed but not available.
+   */
+  async getDeliveryWindows(orderId: string, customerId: string) {
+    const { order, current, original } = await this.ownWindowedOrder(orderId, customerId);
+    const now = this.now();
+    const blocker = this.rescheduleBlocker(order, current, now);
+
+    return {
+      orderId: order.id,
+      current: presentWindow(current),
+      original: presentWindow(original),
+      rescheduleCount: order.rescheduleCount,
+      canReschedule: !blocker,
+      reason: blocker?.message ?? null,
+      options: allowedWindows(original).map((w) => ({
+        ...presentWindow(w),
+        isCurrent: w.start.getTime() === current.start.getTime(),
+        isOriginal: w.start.getTime() === original.start.getTime(),
+        available: !blocker && w.start.getTime() > now.getTime(),
+      })),
+    };
+  }
+
+  /**
+   * Moves the delivery to another window. Only the original window and the
+   * two after it are accepted; any other date or time is refused. Allowed
+   * until the current window starts and while the order has not been picked
+   * up. Picking the current window again is a no-op.
+   */
+  async rescheduleDelivery(orderId: string, customerId: string, windowStart: string) {
+    const { order, current, original } = await this.ownWindowedOrder(orderId, customerId);
+    const now = this.now();
+
+    const blocker = this.rescheduleBlocker(order, current, now);
+    if (blocker) throw new ConflictException(blocker);
+
+    const wanted = new Date(windowStart);
+    const allowed = allowedWindows(original);
+    const target = allowed.find((w) => w.start.getTime() === wanted.getTime());
+    if (!target) {
+      throw new BadRequestException({
+        message: 'Choose one of the delivery windows offered for this order',
+        code: 'WINDOW_NOT_ALLOWED',
+        allowed: allowed.map(presentWindow),
+      });
+    }
+    if (target.start.getTime() <= now.getTime()) {
+      throw new BadRequestException({
+        message: 'That delivery window has already started',
+        code: 'WINDOW_IN_THE_PAST',
+      });
+    }
+
+    if (target.start.getTime() === current.start.getTime()) {
+      return this.getDeliveryWindows(orderId, customerId);
+    }
+
+    // Only if nobody changed it since we read it (a double tap, two phones).
+    const moved = await this.prisma.order.updateMany({
+      where: {
+        id: order.id,
+        customerId,
+        deliveryWindowStart: current.start,
+        status: { in: RESCHEDULABLE_ORDER_STATUSES },
+      },
+      data: {
+        deliveryWindowStart: target.start,
+        deliveryWindowEnd: target.end,
+        rescheduledAt: now,
+        rescheduleCount: { increment: 1 },
+      },
+    });
+    if (moved.count !== 1) {
+      throw new ConflictException({
+        message: 'This order just changed. Refresh and try again.',
+        code: 'ORDER_CHANGED',
+      });
+    }
+
+    this.events.emit('order.delivery.rescheduled', {
+      orderId: order.id,
+      customerId,
+      claimedByStaffId: order.delivery?.claimedByStaffId ?? undefined,
+      from: presentWindow(current),
+      to: presentWindow(target),
+    });
+
+    return this.getDeliveryWindows(orderId, customerId);
   }
 
   /**

@@ -429,3 +429,37 @@ No migration. The missing popup and "ding" is partly backend and partly app.
 | `promotions` | Saved only; nothing is sent yet |
 
 A switched-off category still appears in the in-app notification list; only the lock-screen push is skipped. Document reviews and support replies always push.
+
+## Delivery windows and rescheduling (2.8)
+
+Needs migration `20261110180000_add_delivery_windows` (new nullable columns on `orders` only). Marketplace orders only; food orders are unchanged. Times are Ghana time (UTC+0, no daylight saving).
+
+| Order placed | Delivered |
+| --- | --- |
+| before 9:00 AM | same day, 10:00 AM – 12:00 PM |
+| 9:00 AM to 2:59 PM | same day, 4:00 PM – 6:00 PM |
+| 3:00 PM or later | next day, 10:00 AM – 12:00 PM |
+
+Customer app:
+
+- Marketplace orders (from `POST /orders`, `GET /orders`, `GET /orders/:id`) now carry `deliveryWindow: { slot, start, end, label }`, e.g. `label: "Sun 8 Nov, 10:00 AM – 12:00 PM"`. It is `null` for food orders and for orders placed before this release. The raw `deliveryWindowStart`, `deliveryWindowEnd`, `originalWindowStart`, `rescheduledAt` and `rescheduleCount` are there too.
+- `GET /orders/:id/delivery-windows` returns:
+  - `current` and `original`;
+  - `canReschedule`, plus a `reason` when it is false;
+  - `options`: the original window and the two after it, each with `isCurrent`, `isOriginal` and `available`.
+
+  Show only these options; there is no date picker.
+- `PATCH /orders/:id/delivery-window` `{ windowStart }` (the `start` of an option) moves the delivery and returns the same shape as above. The customer gets a `DELIVERY_RESCHEDULED` notification.
+- Rules:
+  - Only the original window and the two after it, counted from the **original** window, not from the last move. Moving back to the original is allowed.
+  - Only until the current window starts, while the order is pending, confirmed or preparing, and before pickup.
+- Errors:
+  - 400 `WINDOW_NOT_ALLOWED` (with `allowed`) or `WINDOW_IN_THE_PAST`.
+  - 409 `WINDOW_STARTED`, `ALREADY_ON_THE_WAY`, `ORDER_NOT_RESCHEDULABLE` or `ORDER_CHANGED` (refresh and retry).
+  - 400 `NO_DELIVERY_WINDOW` for food orders.
+
+Admin console:
+
+- `GET /admin/orders?deliveryDate=2026-11-08` gives one day's marketplace deliveries, sorted by window: a run sheet for that day.
+- Every order shows its window fields.
+- The admin who accepted a marketplace delivery is notified when the customer moves it.

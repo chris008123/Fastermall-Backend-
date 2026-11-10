@@ -1,5 +1,5 @@
 import { Type } from 'class-transformer';
-import { IsInt, IsOptional, IsString, Min } from 'class-validator';
+import { IsInt, IsOptional, IsString, Matches, Min } from 'class-validator';
 
 // Query string shared by the admin list endpoints. `status` and `type` are
 // checked against the right enum in AdminService, because each list has its
@@ -25,4 +25,10 @@ export class AdminListQueryDto {
   @IsOptional()
   @IsString()
   type?: string;
+
+  // Orders: only those whose delivery window is on this day (Ghana time),
+  // e.g. 2026-11-08. The list is then sorted by window instead of by date.
+  @IsOptional()
+  @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: 'deliveryDate must look like 2026-11-08' })
+  deliveryDate?: string;
 }

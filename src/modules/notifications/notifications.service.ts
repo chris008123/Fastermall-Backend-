@@ -295,6 +295,34 @@ export class NotificationsService {
     else if (event.userId) await this.notifyCustomer(event.userId, input);
   }
 
+  // Emitted by Orders when the customer moves a marketplace delivery.
+  @OnEvent('order.delivery.rescheduled')
+  async onDeliveryRescheduled(event: {
+    orderId: string;
+    customerId: string;
+    claimedByStaffId?: string;
+    to: { start: string; label: string };
+  }) {
+    const data = { orderId: event.orderId, windowStart: event.to.start };
+    await this.notifyCustomer(event.customerId, {
+      title: 'Delivery rescheduled',
+      body: `Your order ${shortRef(event.orderId)} will now be delivered ${event.to.label}.`,
+      type: 'DELIVERY_RESCHEDULED',
+      data,
+      channelId: CHANNELS.orders,
+    });
+    // The admin who accepted the delivery needs to know the new time.
+    if (event.claimedByStaffId) {
+      await this.notifyPartner(event.claimedByStaffId, {
+        title: 'Delivery rescheduled',
+        body: `Order ${shortRef(event.orderId)} moved to ${event.to.label}.`,
+        type: 'DELIVERY_RESCHEDULED',
+        data,
+        channelId: CHANNELS.deliveries,
+      });
+    }
+  }
+
   // Emitted by Orders when a cancelled order takes down a delivery a partner
   // had accepted, so they stop heading to the vendor.
   @OnEvent('delivery.cancelled')

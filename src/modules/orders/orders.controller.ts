@@ -3,6 +3,7 @@ import { parseIdempotencyKey } from '../../shared/utils/idempotency';
 import { OrdersService } from './orders.service';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { UpdateOrderStatusDto } from './dto/update-order-status.dto';
+import { RescheduleDeliveryDto } from './dto/reschedule-delivery.dto';
 import { JwtAuthGuard } from '../../shared/guards/jwt-auth.guard';
 import { RolesGuard } from '../../shared/guards/roles.guard';
 import { Roles } from '../../shared/decorators/roles.decorator';
@@ -30,6 +31,25 @@ export class OrdersController {
   @Get()
   findMine(@CurrentUser() user: { userId: string }) {
     return this.ordersService.findMyOrders(user.userId);
+  }
+
+  // The order's delivery window and the windows it may be moved to.
+  @Get(':id/delivery-windows')
+  deliveryWindows(
+    @CurrentUser() user: { userId: string },
+    @Param('id') id: string,
+  ) {
+    return this.ordersService.getDeliveryWindows(id, user.userId);
+  }
+
+  // Body: { windowStart } from one of the options above.
+  @Patch(':id/delivery-window')
+  rescheduleDelivery(
+    @CurrentUser() user: { userId: string },
+    @Param('id') id: string,
+    @Body() dto: RescheduleDeliveryDto,
+  ) {
+    return this.ordersService.rescheduleDelivery(id, user.userId, dto.windowStart);
   }
 
   @Get(':id')

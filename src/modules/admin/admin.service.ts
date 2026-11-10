@@ -158,9 +158,15 @@ export class AdminService {
 
   /** Every marketplace and food order, newest first. */
   listOrders(query: AdminListQueryDto) {
+    // Ghana time is UTC, so a Ghana day is one UTC day.
+    const day = query.deliveryDate ? new Date(`${query.deliveryDate}T00:00:00.000Z`) : null;
+    if (day && Number.isNaN(day.getTime())) throw new BadRequestException('deliveryDate is not a real date');
     const where: Prisma.OrderWhereInput = {
       status: enumFilter(query.status, OrderStatus, 'status'),
       type: enumFilter(query.type, OrderType, 'type'),
+      ...(day
+        ? { deliveryWindowStart: { gte: day, lt: new Date(day.getTime() + 24 * 60 * 60 * 1000) } }
+        : {}),
     };
     return this.paged(
       query,
@@ -169,7 +175,10 @@ export class AdminService {
         this.prisma.order.findMany({
           where,
           include: ORDER_INCLUDE,
-          orderBy: [{ createdAt: 'desc' }, { id: 'asc' }],
+          // For a delivery day, the run sheet order: by window, then oldest.
+          orderBy: day
+            ? [{ deliveryWindowStart: 'asc' }, { createdAt: 'asc' }, { id: 'asc' }]
+            : [{ createdAt: 'desc' }, { id: 'asc' }],
           skip,
           take,
         }),
