@@ -24,14 +24,21 @@ export function resolvePreferences(saved: unknown) {
  *
  * Be honest with the app about what is live: `active` says which sections the
  * backend actually acts on today.
- *  - notifications.newJobs and notifications.sound: acted on (push for new jobs).
+ *  - notifications.newJobs: push for new jobs.
+ *  - notifications.jobUpdates: push when an accepted delivery is cancelled.
+ *  - notifications.payments: push when a cash-out is paid or failed, or an
+ *    admin records a payout.
+ *  - notifications.sound: every partner push is silent when it is off.
+ *  - notifications.promotions: saved only (no promotions are sent yet).
+ *  The in-app notification list always gets everything; these only stop the
+ *  lock-screen push.
  *  - notifications.vibration: the phone's own notification channel decides.
  *  - delivery.*: saved only. Radius and distance matching need the partner's
- *    location, which is not collected yet.
+ *    location, which is not collected (live location was removed).
  *  - navigation.*: only the app uses these.
  */
 export const ACTIVE_SECTIONS = {
-  notifications: { newJobs: true, jobUpdates: false, payments: false, promotions: false, sound: true, vibration: false },
+  notifications: { newJobs: true, jobUpdates: true, payments: true, promotions: false, sound: true, vibration: false },
   delivery: false,
   navigation: false,
 };

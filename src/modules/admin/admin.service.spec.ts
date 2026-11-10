@@ -248,6 +248,17 @@ describe('AdminService payouts', () => {
     expect(tx.$queryRaw).toHaveBeenCalled(); // same partner-row lock as a cash-out
   });
 
+  it('tells the partner after the payout is saved, and not when it is refused', async () => {
+    const ctx = withTx('150', '100');
+    const events = { emit: jest.fn() };
+    const svc = new (require('./admin.service').AdminService)(ctx.prisma, events);
+    await svc.createPayout('s1', { amount: 20 }, 'admin1');
+    expect(events.emit).toHaveBeenCalledWith('partner.payout.recorded', { staffUserId: 's1', payoutId: 'po1', amount: '20' });
+    events.emit.mockClear();
+    await expect(svc.createPayout('s1', { amount: 999 }, 'admin1')).rejects.toBeInstanceOf(BadRequestException);
+    expect(events.emit).not.toHaveBeenCalled();
+  });
+
   it("leaves room for the partner's own pending/paid cash-outs", async () => {
     const { svc, tx } = withTx('150', '100', 3000); // GHS 30 already cashed out in the app
     await expect(svc.createPayout('s1', { amount: 20.01 }, 'a')).rejects.toBeInstanceOf(BadRequestException);

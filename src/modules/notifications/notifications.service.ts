@@ -31,10 +31,18 @@ const BROADCAST_BATCH = 500;
 export const BROADCAST_AUDIENCES = ['CUSTOMERS', 'DELIVERY_PARTNER', 'VENDOR', 'LAUNDRY_STAFF', 'ADMIN', 'ALL_STAFF'] as const;
 export type BroadcastAudience = (typeof BROADCAST_AUDIENCES)[number];
 
-const CHANNELS = {
+// Every push goes out on one of these two Android channels. The apps must
+// create both with Notifications.setNotificationChannelAsync(id, {
+// importance: AndroidImportance.MAX, sound: 'default' }) or Android shows
+// them without a popup or sound. A channel id the phone doesn't know is
+// dropped by Android, so no other ids are used (broadcasts included).
+export const CHANNELS = {
   orders: 'orders',
   deliveries: 'deliveries',
 } as const;
+
+// Partner notification switches the backend acts on (see PreferencesService).
+type PartnerCategory = 'newJobs' | 'jobUpdates' | 'payments';
 
 const ORDER_STATUS_COPY: Record<string, string> = {
   PENDING: 'pending',
@@ -261,7 +269,7 @@ export class NotificationsService {
     reason?: string;
   }) {
     const approved = event.status === 'APPROVED';
-    await this.notifyStaff(event.staffUserId, {
+    await this.notifyPartner(event.staffUserId, {
       title: approved ? 'Document approved' : 'Document rejected',
       body: approved
         ? `Your ${event.documentLabel.toLowerCase()} was approved.`
@@ -283,8 +291,121 @@ export class NotificationsService {
       data: { ticketId: event.ticketId },
       channelId: CHANNELS.orders,
     };
-    if (event.staffUserId) await this.notifyStaff(event.staffUserId, input);
+    if (event.staffUserId) await this.notifyPartner(event.staffUserId, input);
     else if (event.userId) await this.notifyCustomer(event.userId, input);
+  }
+
+  // Emitted by Orders when a cancelled order takes down a delivery a partner
+  // had accepted, so they stop heading to the vendor.
+  @OnEvent('delivery.cancelled')
+  async onDeliveryCancelled(event: { deliveryId: string; orderId?: string; staffUserId: string }) {
+    await this.notifyPartner(
+      event.staffUserId,
+      {
+        title: 'Delivery cancelled',
+        body: 'An order you accepted was cancelled. You do not need to deliver it.',
+        type: 'DELIVERY_CANCELLED',
+        data: { deliveryId: event.deliveryId, jobId: event.deliveryId, orderId: event.orderId },
+        channelId: CHANNELS.deliveries,
+      },
+      'jobUpdates',
+    );
+  }
+
+  // Emitted by the wallet when an admin marks a cash-out paid or failed.
+  @OnEvent('partner.cashout.updated')
+  async onCashOutUpdated(event: {
+    staffUserId: string;
+    payoutId: string;
+    status: 'PAID' | 'FAILED';
+    amountPesewas: number;
+    reason?: string | null;
+  }) {
+    const amount = `GHS ${(event.amountPesewas / 100).toFixed(2)}`;
+    await this.notifyPartner(
+      event.staffUserId,
+      event.status === 'PAID'
+        ? {
+            title: 'Cash-out sent',
+            body: `Your cash-out of ${amount} has been sent.`,
+            type: 'CASHOUT_PAID',
+            data: { payoutId: event.payoutId, status: event.status },
+            channelId: CHANNELS.deliveries,
+          }
+        : {
+            title: 'Cash-out failed',
+            body: `Your cash-out of ${amount} could not be sent${event.reason ? `: ${event.reason}` : ''}. The money is back in your balance.`,
+            type: 'CASHOUT_FAILED',
+            data: { payoutId: event.payoutId, status: event.status },
+            channelId: CHANNELS.deliveries,
+          },
+      'payments',
+    );
+  }
+
+  // Emitted by Admin when money sent to a partner by hand is recorded.
+  @OnEvent('partner.payout.recorded')
+  async onPayoutRecorded(event: { staffUserId: string; payoutId: string; amount: string }) {
+    await this.notifyPartner(
+      event.staffUserId,
+      {
+        title: 'Payment sent',
+        body: `GHS ${Number(event.amount).toFixed(2)} has been paid to you.`,
+        type: 'PAYOUT_RECORDED',
+        data: { payoutId: event.payoutId },
+        channelId: CHANNELS.deliveries,
+      },
+      'payments',
+    );
+  }
+
+  // ───────── Test pushes (diagnosing a missing popup or sound) ─────────
+
+  /**
+   * Sends a test push to every phone of one account and returns what Expo
+   * said for each, plus the device's switches. Nothing is added to the
+   * in-app list. Category switches are ignored so the test always goes out.
+   */
+  async sendTestPush(target: NotificationUser) {
+    const staff = this.isStaff(target);
+    const channelId = staff ? CHANNELS.deliveries : CHANNELS.orders;
+    const { devices, results } = await this.push.sendTest(
+      staff ? { staffUserIds: [target.userId] } : { userIds: [target.userId] },
+      {
+        title: 'Test notification',
+        body: 'If you can see and hear this, notifications are working.',
+        channelId,
+        data: { type: 'TEST' },
+      },
+    );
+
+    return {
+      channelId,
+      devices: devices.map((d, i) => ({ ...d, result: results.find((r) => r.token === d.token) ?? results[i] ?? null })),
+      sent: results.filter((r) => r.status === 'ok').length,
+      failed: results.filter((r) => r.status === 'error').length,
+      hint:
+        devices.length === 0
+          ? 'No phone is registered for this account. The app must call POST /notifications/devices after login.'
+          : results.some((r) => r.status === 'ok')
+            ? `Expo accepted the push. If the phone shows nothing, or no popup or sound: the app must create the "${channelId}" channel with MAX importance and sound, and set Notifications.setNotificationHandler so banners and sound play while the app is open.`
+            : 'Expo refused the push. See each device result (DeviceNotRegistered = the app must register again; InvalidCredentials = the FCM/APNs keys in the Expo project).',
+    };
+  }
+
+  /** Admin: the same test for someone else's account (404 if unknown). */
+  async sendTestPushTo(target: { userId?: string; staffUserId?: string }) {
+    if (!!target.userId === !!target.staffUserId) {
+      throw new BadRequestException('Send exactly one of userId or staffUserId');
+    }
+    if (target.userId) {
+      const user = await this.prisma.user.findFirst({ where: { id: target.userId, deletedAt: null }, select: { id: true } });
+      if (!user) throw new NotFoundException('Customer not found');
+      return this.sendTestPush({ userId: user.id, role: 'CUSTOMER' });
+    }
+    const staff = await this.prisma.staffUser.findUnique({ where: { id: target.staffUserId }, select: { id: true, role: true } });
+    if (!staff) throw new NotFoundException('Staff account not found');
+    return this.sendTestPush({ userId: staff.id, role: staff.role });
   }
 
   // ───────── Reading ─────────
@@ -413,7 +534,7 @@ export class NotificationsService {
 
     const customers = audience === 'CUSTOMERS';
     const ids = customers
-      ? (await this.prisma.user.findMany({ select: { id: true } })).map((u) => u.id)
+      ? (await this.prisma.user.findMany({ where: { deletedAt: null }, select: { id: true } })).map((u) => u.id)
       : (
           await this.prisma.staffUser.findMany({
             where: { isActive: true, ...(audience === 'ALL_STAFF' ? {} : { role: audience as StaffRole }) },
@@ -435,6 +556,11 @@ export class NotificationsService {
         title: t,
         body: b,
         data: { type: 'ANNOUNCEMENT' },
+        // Before: no channel, so Android used Expo's fallback channel, which
+        // shows no popup. Now the same channel as every other push for that
+        // app (customers: orders, staff: deliveries). The "announcements"
+        // switch on the device still decides whether the push is sent.
+        channelId: customers ? CHANNELS.orders : CHANNELS.deliveries,
         filterAs: 'offers',
       });
     }
@@ -471,7 +597,20 @@ export class NotificationsService {
     );
   }
 
-  private async notifyStaff(staffUserId: string, input: NotifyInput) {
+  /**
+   * Like notifyStaff, but honours a delivery partner's own settings
+   * (GET/PUT /logistics/me/preferences): the in-app notification is always
+   * stored; the push is skipped when the partner switched that category off,
+   * and is silent when they turned sound off. Staff without a partner
+   * profile (admins) get a normal push.
+   */
+  private async notifyPartner(staffUserId: string, input: NotifyInput, category?: PartnerCategory) {
+    const profile = await this.safely(() =>
+      this.prisma.deliveryPartnerProfile.findUnique({ where: { staffUserId }, select: { preferences: true } }),
+    );
+    const prefs = resolvePreferences(profile?.preferences).notifications;
+    const pushAllowed = !category || !profile || prefs[category] !== false;
+
     await this.safely(() =>
       this.prisma.notification.create({
         data: {
@@ -483,9 +622,16 @@ export class NotificationsService {
         },
       }),
     );
+    if (!pushAllowed) return;
     void this.push.sendToOwners(
       { staffUserIds: [staffUserId] },
-      { title: input.title, body: input.body, channelId: input.channelId, data: { type: input.type, ...cleanData(input.data) } },
+      {
+        title: input.title,
+        body: input.body,
+        channelId: input.channelId,
+        data: { type: input.type, ...cleanData(input.data) },
+        ...(profile && prefs.sound === false ? { sound: false } : {}),
+      },
     );
   }
 

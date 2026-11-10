@@ -2,6 +2,7 @@ import { Body, Controller, Get, Param, Post, Query, UseGuards } from '@nestjs/co
 import { NotificationsService } from '../notifications/notifications.service';
 import { CurrentUser } from '../../shared/decorators/current-user.decorator';
 import { BroadcastDto } from './dto/broadcast.dto';
+import { TestPushDto } from './dto/test-push.dto';
 import { CreatePayoutDto } from './dto/create-payout.dto';
 import { AdminService } from './admin.service';
 import { AdminListQueryDto } from './dto/admin-list-query.dto';
@@ -84,6 +85,13 @@ export class AdminController {
   @Post('notifications/broadcast')
   broadcast(@Body() dto: BroadcastDto) {
     return this.notifications.broadcast(dto.audience, dto.title, dto.body);
+  }
+
+  // Test push to one customer's or staff member's phones, with Expo's answer
+  // per phone. Body: { userId } or { staffUserId }.
+  @Post('notifications/test')
+  testPush(@Body() dto: TestPushDto) {
+    return this.notifications.sendTestPushTo(dto);
   }
 
   // ?page=1&pageSize=50

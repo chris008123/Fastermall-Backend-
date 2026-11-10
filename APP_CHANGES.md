@@ -384,3 +384,48 @@ Admin console:
 
 - WhatsApp number: `PATCH /admin/settings` `{ "whatsappContactNumber": "0241234567" }`. Any common format works (`+233 24 123 4567`, `0241234567`); it is stored as `233241234567`. Send `""` to remove it. A bad number gets 400.
 - FAQs: `GET /admin/faqs` (all, including unpublished), `POST /admin/faqs` `{ question, answer, category?, sortOrder?, isPublished? }`, `PATCH /admin/faqs/:id` (any of those fields), `DELETE /admin/faqs/:id`. Question 5–300 characters, answer up to 5000. `isPublished: false` hides a question without deleting it. Changes appear in the audit log.
+
+## Notification popup and sound, Delivery App notification settings (2.4)
+
+No migration. The missing popup and "ding" is partly backend and partly app.
+
+**Backend (done):**
+- Admin broadcasts were the only pushes sent with no Android channel. Android then uses Expo's fallback channel, which shows no popup. They now go out on `orders` (customers) or `deliveries` (staff), like every other push. Deleted customer accounts are no longer included.
+- Every push asks for `sound: "default"` and `priority: "high"`. Partners who turned sound off get silent pushes.
+
+**Both apps must (or the popup and sound still won't appear):**
+
+1. Create the channels once at start-up, before registering the token:
+   ```ts
+   await Notifications.setNotificationChannelAsync('orders', { name: 'Orders', importance: Notifications.AndroidImportance.MAX, sound: 'default', vibrationPattern: [0, 250, 250, 250] });
+   await Notifications.setNotificationChannelAsync('deliveries', { name: 'Deliveries', importance: Notifications.AndroidImportance.MAX, sound: 'default', vibrationPattern: [0, 250, 250, 250] });
+   ```
+   Android only shows a popup for channels with HIGH or MAX importance. A channel's importance can't be raised after it was created, so if the app already created them with lower importance, use new ids (tell us and we'll switch the backend to them) or ask testers to reinstall.
+2. Show notifications while the app is open. By default Expo shows nothing in the foreground, which matches "it's in the list but no popup":
+   ```ts
+   Notifications.setNotificationHandler({
+     handleNotification: async () => ({ shouldShowBanner: true, shouldShowList: true, shouldPlaySound: true, shouldSetBadge: false }),
+   });
+   ```
+3. Register the token after every login: `POST /notifications/devices` `{ token, platform }`.
+
+**Checking a phone:**
+- `POST /notifications/test` (any signed-in user) sends a test push to the caller's own phones. It returns, per phone, whether Expo accepted it, plus a `hint`. Nothing is added to the in-app list. Limited to 5 a minute.
+- `POST /admin/notifications/test` `{ userId }` or `{ staffUserId }` does the same for someone else's account (admin only).
+- What the answer means:
+  - `devices: []` means the app never registered that phone.
+  - `status: ok` but nothing on the phone means app setup (channels and handler above).
+  - `DeviceNotRegistered` means the app must register again.
+  - `InvalidCredentials` means the FCM/APNs keys in the Expo project.
+
+**Delivery App notification settings:** `GET /logistics/me/preferences` and `PUT /logistics/me/preferences` `{ notifications: { … } }` (partners). The backend now acts on these switches (`active` in the answer says which):
+
+| Switch | Pushes it controls |
+| --- | --- |
+| `newJobs` | New delivery available (`DELIVERY_AVAILABLE`) |
+| `jobUpdates` | **New:** a delivery you accepted was cancelled (`DELIVERY_CANCELLED`, with `jobId`) |
+| `payments` | **New:** cash-out sent (`CASHOUT_PAID`), cash-out failed (`CASHOUT_FAILED`, money back in balance), payment recorded by an admin (`PAYOUT_RECORDED`) |
+| `sound` | Every partner push is silent when off |
+| `promotions` | Saved only; nothing is sent yet |
+
+A switched-off category still appears in the in-app notification list; only the lock-screen push is skipped. Document reviews and support replies always push.

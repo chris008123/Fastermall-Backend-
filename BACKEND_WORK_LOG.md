@@ -64,13 +64,12 @@ Each feature is planned as its own branch, merged into `main`, following the exi
 - [x] 8 starter FAQs in `prisma/seed.ts`, created only if missing, so admin edits are never overwritten.
 - [x] Verified on a throwaway Postgres: migration from current `main` has no drift; seeding twice keeps 8 rows and keeps edits; full HTTP smoke test of every new route.
 
-### 2.4 Notification popup fix and Delivery App notification setup `[ ]`
-- [ ] Give broadcasts a dedicated `announcements` channel id and always send `sound: 'default'` and `priority: 'high'`. Document the exact channel ids the apps must create (`orders`, `deliveries`, `announcements`) with HIGH importance and sound.
-- [ ] Exclude deleted customers (`deletedAt != null`) from broadcasts.
-- [ ] Add `POST /notifications/test`, which sends a test push to the caller's own devices and returns the Expo ticket results, so popup and ding problems can be diagnosed on a real phone.
-- [ ] Log receipts more clearly (count sent / failed / reason).
-- [ ] Delivery App setup: add staff device preferences (`newDeliveries`, `deliveryUpdates`, `announcements`). Add `GET/PATCH /notifications/preferences` for staff, so the Delivery App has a settings section to call. Honour `newDeliveries` in `onDeliveryCreated`.
-- [ ] Optional: let the admin broadcast target a single role (already supported) with a chosen channel.
+### 2.4 Notification popup fix and Delivery App notification setup `[x]`
+- [x] Root cause on the backend: broadcasts had no Android channel, so they used Expo's fallback channel (no popup). They now use `orders` / `deliveries`, the channels every other push uses. I didn't add a new `announcements` channel: Android drops pushes for a channel id the phone doesn't have.
+- [x] Broadcasts skip deleted customers.
+- [x] `POST /notifications/test` (own phones) and `POST /admin/notifications/test` (any account): send a test push and return Expo's answer per phone, plus a hint. Push errors are now logged with the masked token and Expo's error code.
+- [x] Delivery App settings: master's `GET/PUT /logistics/me/preferences` already stored them. Now `jobUpdates` (accepted delivery cancelled) and `payments` (cash-out paid/failed, admin payout recorded) are acted on, `sound` applies to every partner push, and the in-app list always gets everything.
+- [ ] *App side (not backend):* create the `orders` and `deliveries` channels with MAX importance and sound, and set `Notifications.setNotificationHandler` so banners and sound show while the app is open. This is the most likely cause of "in the list but no popup". The exact code is in APP_CHANGES.md.
 
 ### 2.8 Scheduled delivery windows and rescheduling `[ ]`
 - [ ] Add a pure, fully unit-tested helper `src/shared/utils/delivery-windows.ts`:
@@ -185,3 +184,4 @@ After each step: `npm test`, `npm run build`, then update this log, `README.md` 
 | 10 Nov 2026 | 2.6 Remove live maps and location | Done on branch `remove-live-maps` (pulled `main` first, up to date). 266/266 tests pass, build clean. No migration. |
 | 10 Nov 2026 | Merge `origin/master` into `main` | Partner-app branch (88 commits) merged on `merge-master`; 19 conflicts resolved, duplicates unified (support replies, partner payouts, staff deactivation). Live location from that branch disabled to match 2.6. Lost code restored (customer lockout, vendor-owner schema, security headers); missing account-deletion feature removed from routes. Migrations verified on a throwaway Postgres for fresh, main-history and master-history databases (no drift). Tests and build pass. `backup-connecting-to-frontend` left unmerged (superseded first-version backup). |
 | 10 Nov 2026 | 2.13 WhatsApp contact + 2.14 FAQ | Built directly on `main` (no branches from now on, per user). Unit tests added; migration, seed and routes verified against a throwaway Postgres. |
+| 10 Nov 2026 | 2.4 Notifications | Broadcast channel fix, test-push diagnostics, partner jobUpdates/payments/sound switches live. 548 tests pass; app booted against a throwaway DB and the new routes answered. No migration. |

@@ -10,6 +10,7 @@ import {
   Query,
   UseGuards,
 } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import { NotificationsService, NotificationUser } from './notifications.service';
 import { RegisterDeviceDto } from './dto/register-device.dto';
 import { NotificationsQueryDto } from './dto/notifications-query.dto';
@@ -27,6 +28,14 @@ export class NotificationsController {
   @Get()
   findMine(@CurrentUser() user: NotificationUser, @Query() query: NotificationsQueryDto) {
     return this.notificationsService.findMine(user, query);
+  }
+
+  // Sends a test push to the caller's own phones and reports, per phone,
+  // whether Expo accepted it. For "the notification never pops up / dings".
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
+  @Post('test')
+  sendTest(@CurrentUser() user: NotificationUser) {
+    return this.notificationsService.sendTestPush(user);
   }
 
   @Get('unread-count')

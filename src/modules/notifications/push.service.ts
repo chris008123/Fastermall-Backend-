@@ -17,6 +17,19 @@ export interface PushPayload {
   sound?: boolean;
 }
 
+/** What Expo said about one device (token masked). */
+export interface PushResult {
+  token: string;
+  status: 'ok' | 'error';
+  // Expo's error code, e.g. DeviceNotRegistered, InvalidCredentials, MessageTooBig.
+  error?: string;
+  message?: string;
+}
+
+// Enough of a token to tell devices apart, never the whole thing.
+export const maskToken = (token: string) =>
+  token.length > 22 ? `${token.slice(0, 18)}…${token.slice(-4)}` : token;
+
 export interface PushTargets {
   userIds?: string[];
   staffUserIds?: string[];
@@ -83,13 +96,45 @@ export class PushService {
     }
   }
 
-  private async send(tokens: string[], payload: PushPayload): Promise<void> {
+  /**
+   * Diagnostic send (POST /notifications/test): pushes to every device of the
+   * owners, ignoring the category switches, and returns what Expo answered
+   * for each one. Like the normal send it never throws and removes dead
+   * tokens. Delivery problems Apple/Google report later only show in the
+   * receipts (logged about 15 minutes after).
+   */
+  async sendTest(targets: PushTargets, payload: PushPayload) {
+    const or: Array<{ userId?: { in: string[] }; staffUserId?: { in: string[] } }> = [];
+    if (targets.userIds?.length) or.push({ userId: { in: targets.userIds } });
+    if (targets.staffUserIds?.length) or.push({ staffUserId: { in: targets.staffUserIds } });
+    if (or.length === 0) return { devices: [], results: [] as PushResult[] };
+
+    const devices = await this.prisma.device.findMany({
+      where: { OR: or },
+      select: { token: true, platform: true, lastSeenAt: true, orderUpdates: true, announcements: true },
+      orderBy: { lastSeenAt: 'desc' },
+    });
+    let results: PushResult[] = [];
+    try {
+      results = await this.send(devices.map((d) => d.token), payload);
+    } catch (error) {
+      this.logger.error(`Test push failed: ${(error as Error).message}`);
+    }
+    return {
+      devices: devices.map((d) => ({ ...d, token: maskToken(d.token) })),
+      results,
+    };
+  }
+
+  private async send(tokens: string[], payload: PushPayload): Promise<PushResult[]> {
+    const results: PushResult[] = [];
     const messages: ExpoPushMessage[] = [];
     const invalid: string[] = [];
 
     for (const token of new Set(tokens)) {
       if (!Expo.isExpoPushToken(token)) {
         invalid.push(token);
+        results.push({ token: maskToken(token), status: 'error', error: 'InvalidToken', message: 'Not an Expo push token' });
         continue;
       }
       messages.push({
@@ -104,7 +149,7 @@ export class PushService {
     }
 
     if (invalid.length > 0) await this.removeTokens(invalid);
-    if (messages.length === 0) return;
+    if (messages.length === 0) return results;
 
     const dead: string[] = [];
     const receiptIds = new Map<string, string>(); // receipt id -> token
@@ -116,14 +161,23 @@ export class PushService {
           const token = chunk[index].to as string;
           if (ticket.status === 'ok') {
             receiptIds.set(ticket.id, token);
-          } else if (ticket.details?.error === 'DeviceNotRegistered') {
+            results.push({ token: maskToken(token), status: 'ok' });
+            return;
+          }
+          const error = ticket.details?.error;
+          results.push({ token: maskToken(token), status: 'error', error, message: ticket.message });
+          if (error === 'DeviceNotRegistered') {
             dead.push(token);
           } else {
-            this.logger.warn(`Push rejected for a device: ${ticket.message}`);
+            this.logger.warn(`Push rejected for ${maskToken(token)}: ${error ?? ''} ${ticket.message}`);
           }
         });
       } catch (error) {
-        this.logger.error(`Expo push request failed: ${(error as Error).message}`);
+        const message = (error as Error).message;
+        this.logger.error(`Expo push request failed: ${message}`);
+        for (const m of chunk) {
+          results.push({ token: maskToken(m.to as string), status: 'error', error: 'ExpoUnreachable', message });
+        }
       }
     }
 
@@ -133,6 +187,7 @@ export class PushService {
       const timer = setTimeout(() => void this.checkReceipts(receiptIds), RECEIPT_DELAY_MS);
       timer.unref(); // never keep the process alive just for this
     }
+    return results;
   }
 
   // Receipts are where Expo reports tokens that Apple/Google no longer accept.
@@ -147,7 +202,7 @@ export class PushService {
             const token = receiptIds.get(id);
             if (token) dead.push(token);
           } else {
-            this.logger.warn(`Push delivery error: ${receipt.message}`);
+            this.logger.warn(`Push delivery error for ${maskToken(receiptIds.get(id) ?? '')}: ${receipt.details?.error ?? ''} ${receipt.message}`);
           }
         }
       }

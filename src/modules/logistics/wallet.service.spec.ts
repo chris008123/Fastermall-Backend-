@@ -155,9 +155,26 @@ describe('WalletService', () => {
   describe('admin', () => {
     it('marks a PENDING cash-out PAID, once', async () => {
       prisma.payoutRequest.updateMany.mockResolvedValue({ count: 1 });
-      prisma.payoutRequest.findUniqueOrThrow.mockResolvedValue({ id: 'po1', status: 'PAID', amountPesewas: 1000, feePesewas: 0, currency: 'GHS', network: 'MTN', destinationMasked: 'x', createdAt: new Date() });
-      await expect(svc.adminSetPayoutStatus('po1', 'PAID')).resolves.toMatchObject({ status: 'PAID' });
+      prisma.payoutRequest.findUniqueOrThrow.mockResolvedValue({ id: 'po1', status: 'PAID', amountPesewas: 1000, feePesewas: 0, currency: 'GHS', network: 'MTN', destinationMasked: 'x', createdAt: new Date(), failureReason: null, partner: { staffUserId: 's1' } });
+      const events = { emit: jest.fn() };
+      svc = new WalletService(prisma, cfg, staff, events as any);
+      const out: any = await svc.adminSetPayoutStatus('po1', 'PAID');
+      expect(out).toMatchObject({ status: 'PAID' });
+      expect(out).not.toHaveProperty('partner');
       expect(prisma.payoutRequest.updateMany.mock.calls[0][0].where).toEqual({ id: 'po1', status: 'PENDING' });
+      // The partner is told.
+      expect(events.emit).toHaveBeenCalledWith('partner.cashout.updated', {
+        staffUserId: 's1', payoutId: 'po1', status: 'PAID', amountPesewas: 1000, reason: null,
+      });
+    });
+
+    it('tells nobody when the cash-out was already processed', async () => {
+      const events = { emit: jest.fn() };
+      svc = new WalletService(prisma, cfg, staff, events as any);
+      prisma.payoutRequest.updateMany.mockResolvedValue({ count: 0 });
+      prisma.payoutRequest.findUnique.mockResolvedValue({ id: 'po1' });
+      await expect(svc.adminSetPayoutStatus('po1', 'PAID')).rejects.toBeInstanceOf(ConflictException);
+      expect(events.emit).not.toHaveBeenCalled();
     });
 
     it('409s when already processed, 404s when unknown', async () => {

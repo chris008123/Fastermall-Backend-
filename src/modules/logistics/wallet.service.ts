@@ -3,7 +3,9 @@ import {
   ConflictException,
   Injectable,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import { ConfigService } from '@nestjs/config';
 import { PayoutStatus } from '@prisma/client';
 import { PrismaService } from '../../database/prisma.service';
@@ -33,6 +35,7 @@ export class WalletService {
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
     private readonly staff: StaffService,
+    @Optional() private readonly events?: EventEmitter2,
   ) {}
 
   private get currency() {
@@ -294,6 +297,18 @@ export class WalletService {
       });
     }
 
-    return this.toView(await this.prisma.payoutRequest.findUniqueOrThrow({ where: { id } }));
+    const updated = await this.prisma.payoutRequest.findUniqueOrThrow({
+      where: { id },
+      include: { partner: { select: { staffUserId: true } } },
+    });
+    // The partner is told (push respects their "payments" switch).
+    this.events?.emit('partner.cashout.updated', {
+      staffUserId: updated.partner.staffUserId,
+      payoutId: updated.id,
+      status,
+      amountPesewas: updated.amountPesewas,
+      reason: updated.failureReason,
+    });
+    return this.toView(updated);
   }
 }

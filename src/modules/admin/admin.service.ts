@@ -1,4 +1,5 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException, Optional } from '@nestjs/common';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import { CreatePayoutDto } from './dto/create-payout.dto';
 import {
   DeliveryStatus,
@@ -88,7 +89,10 @@ export function pageParams(query: AdminListQueryDto) {
 
 @Injectable()
 export class AdminService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    @Optional() private readonly events?: EventEmitter2,
+  ) {}
 
   async dashboardStats(now = new Date()) {
     const since30 = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
@@ -406,7 +410,7 @@ export class AdminService {
   async createPayout(staffId: string, dto: CreatePayoutDto, adminId: string) {
     const profile = await this.partnerProfile(staffId);
     const amount = new Prisma.Decimal(dto.amount);
-    return this.prisma.$transaction(
+    const payout = await this.prisma.$transaction(
       async (tx) => {
         // Same lock as a partner cash-out (WalletService.cashOut), so the two
         // can't spend the same balance at the same moment.
@@ -438,6 +442,13 @@ export class AdminService {
       },
       { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
     );
+    // Told after the commit (push respects the partner's "payments" switch).
+    this.events?.emit('partner.payout.recorded', {
+      staffUserId: staffId,
+      payoutId: payout.id,
+      amount: String(payout.amount),
+    });
+    return payout;
   }
 
   /** Admin actions, newest first (written by AuditInterceptor). */

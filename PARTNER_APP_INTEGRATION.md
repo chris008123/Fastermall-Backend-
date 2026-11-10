@@ -90,6 +90,8 @@ Cash-outs are **paid by hand**. An admin marks them `PAID` or `FAILED` (`PATCH /
 
 - Register the phone with `POST /devices` `{token}` on every login or launch. Remove it with `DELETE /devices?token=…` or pass `pushToken` to `/staff/logout`.
 - New-job push: `data.type = "DELIVERY_AVAILABLE"`, with `data.jobId` (same as `deliveryId`). Open `GET /logistics/deliveries/:id` on tap. Document review push: `DOCUMENT_REVIEWED`. Support reply push: `SUPPORT_REPLY` with `ticketId`.
+- Also: `DELIVERY_CANCELLED` (with `jobId`; honours `jobUpdates`), `CASHOUT_PAID` / `CASHOUT_FAILED` / `PAYOUT_RECORDED` (honour `payments`). `sound: false` makes every partner push silent.
+- Create the Android channel `deliveries` with MAX importance and sound, and set `Notifications.setNotificationHandler` so pushes pop up while the app is open. `POST /notifications/test` sends a test push to this phone and says what Expo answered.
 - `GET /notifications` (optional `?unread=true&limit=&cursor=`), `GET /notifications/unread-count`, `PATCH /notifications/:id` `{isRead}`, `PATCH /notifications/read-all`, `DELETE /notifications/:id`.
 - `GET/PUT /logistics/me/preferences`: `PUT` changes only what you send. The response has an `active` block saying what the backend really acts on. **Live today:** `notifications.newJobs` and `notifications.sound`. **Saved only:** everything under `delivery`, plus `navigation`, `vibration`, `jobUpdates`, `payments`, `promotions`. Keep showing "not active yet" for those.
 

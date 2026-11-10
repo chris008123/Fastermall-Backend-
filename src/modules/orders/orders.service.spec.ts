@@ -238,7 +238,7 @@ describe('OrdersService cancel and expiry restock', () => {
   function txSetup(flipCount: number) {
     const tx: any = {
       order: { updateMany: jest.fn().mockResolvedValue({ count: flipCount }) },
-      delivery: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
+      delivery: { updateMany: jest.fn().mockResolvedValue({ count: 1 }), findFirst: jest.fn().mockResolvedValue(null) },
       product: { update: jest.fn() },
     };
     const prisma: any = {
@@ -248,7 +248,7 @@ describe('OrdersService cancel and expiry restock', () => {
     const events = { emit: jest.fn() };
     const config = { get: jest.fn() };
     const svc = new OrdersService(prisma, {} as any, {} as any, events as any, config as any, {} as any);
-    return { svc, prisma, tx };
+    return { svc, prisma, tx, events };
   }
 
   const order = {
@@ -266,6 +266,28 @@ describe('OrdersService cancel and expiry restock', () => {
       where: { id: 'p1' },
       data: { stock: { increment: 3 } },
     });
+  });
+
+  it('tells the partner who had accepted the delivery, after the commit', async () => {
+    const { svc, prisma, tx, events } = txSetup(1);
+    prisma.order.findUnique.mockResolvedValue(order);
+    tx.delivery.findFirst.mockResolvedValue({ id: 'd1', partner: { staffUserId: 's1' } });
+    await svc.updateStatus('o1', { status: 'CANCELLED' } as any);
+    expect(tx.delivery.findFirst.mock.calls[0][0].where).toMatchObject({ orderId: 'o1', partnerId: { not: null } });
+    expect(events.emit).toHaveBeenCalledWith('delivery.cancelled', { deliveryId: 'd1', orderId: 'o1', staffUserId: 's1' });
+  });
+
+  it('tells nobody when no partner had the delivery, or the order was already cancelled', async () => {
+    const a = txSetup(1);
+    a.prisma.order.findUnique.mockResolvedValue(order);
+    await a.svc.updateStatus('o1', { status: 'CANCELLED' } as any);
+    expect(a.events.emit).not.toHaveBeenCalledWith('delivery.cancelled', expect.anything());
+
+    const b = txSetup(0);
+    b.prisma.order.findUnique.mockResolvedValue({ ...order, status: 'CANCELLED' });
+    b.tx.delivery.findFirst.mockResolvedValue({ id: 'd1', partner: { staffUserId: 's1' } });
+    await b.svc.updateStatus('o1', { status: 'CANCELLED' } as any);
+    expect(b.events.emit).not.toHaveBeenCalledWith('delivery.cancelled', expect.anything());
   });
 
   it('does not restock again if the order was already cancelled', async () => {

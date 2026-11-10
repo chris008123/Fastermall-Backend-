@@ -510,12 +510,21 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
     },
     allowedFrom: OrderStatus[],
   ): Promise<boolean> {
-    return this.prisma.$transaction(async (tx) => {
+    let takenFrom: { deliveryId: string; staffUserId: string } | null = null;
+
+    const cancelled = await this.prisma.$transaction(async (tx) => {
       const flipped = await tx.order.updateMany({
         where: { id: order.id, status: { in: allowedFrom } },
         data: { status: OrderStatus.CANCELLED },
       });
       if (flipped.count !== 1) return false;
+
+      // A partner already on the way is told (after the commit, below).
+      const active = await tx.delivery.findFirst({
+        where: { orderId: order.id, partnerId: { not: null }, status: { notIn: ['DELIVERED', 'FAILED'] } },
+        select: { id: true, partner: { select: { staffUserId: true } } },
+      });
+      if (active?.partner) takenFrom = { deliveryId: active.id, staffUserId: active.partner.staffUserId };
 
       await tx.delivery.updateMany({
         where: { orderId: order.id, status: { not: 'DELIVERED' } },
@@ -534,6 +543,12 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
       }
       return true;
     });
+
+    if (cancelled && takenFrom) {
+      const { deliveryId, staffUserId } = takenFrom;
+      this.events.emit('delivery.cancelled', { deliveryId, orderId: order.id, staffUserId });
+    }
+    return cancelled;
   }
 
   /**
