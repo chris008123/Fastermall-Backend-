@@ -24,6 +24,8 @@ describe('NotificationsService', () => {
         findMany: jest.fn().mockResolvedValue([]),
         updateMany: jest.fn(),
         findUnique: jest.fn(),
+        count: jest.fn().mockResolvedValue(0),
+        deleteMany: jest.fn(),
       },
       device: {
         upsert: jest.fn().mockImplementation(({ create }) => Promise.resolve({ id: 'd1', ...create })),
@@ -76,12 +78,12 @@ describe('NotificationsService', () => {
 
     it('returns only the latest 50', async () => {
       await svc.findMine(customer);
-      expect(prisma.notification.findMany.mock.calls[0][0]).toMatchObject({ take: 50, orderBy: { createdAt: 'desc' } });
+      expect(prisma.notification.findMany.mock.calls[0][0]).toMatchObject({ take: 50, orderBy: [{ createdAt: 'desc' }, { id: 'desc' }] });
     });
 
     it('marks all of the caller’s unread notifications read in one call', async () => {
       prisma.notification.updateMany.mockResolvedValue({ count: 4 });
-      await expect(svc.markAllRead(customer)).resolves.toEqual({ count: 4 });
+      await expect(svc.markAllRead(customer)).resolves.toEqual({ count: 4, updated: 4 });
       expect(prisma.notification.updateMany).toHaveBeenCalledWith({
         where: { userId: 'c1', isRead: false },
         data: { isRead: true },
@@ -185,14 +187,31 @@ describe('NotificationsService', () => {
       await events.emitAsync('delivery.created', { deliveryId: 'd1', orderId: 'o1' });
       await flush();
       expect(prisma.deliveryPartnerProfile.findMany).toHaveBeenCalledWith({
-        where: { isAvailable: true },
-        select: { staffUserId: true },
+        where: { isAvailable: true, staffUser: { isActive: true } },
+        select: { staffUserId: true, preferences: true },
       });
       expect(prisma.notification.createMany.mock.calls[0][0].data).toHaveLength(2);
       expect(push.sendToOwners).toHaveBeenCalledWith(
         { staffUserIds: ['s1', 's2'] },
-        expect.objectContaining({ data: expect.objectContaining({ type: 'DELIVERY_AVAILABLE', deliveryId: 'd1' }) }),
+        expect.objectContaining({ data: expect.objectContaining({ type: 'DELIVERY_AVAILABLE', deliveryId: 'd1', jobId: 'd1' }) }),
       );
+    });
+
+    it('respects partner settings: no push when new-job alerts are off, silent push when sound is off', async () => {
+      prisma.deliveryPartnerProfile.findMany.mockResolvedValue([
+        { staffUserId: 's1', preferences: null },
+        { staffUserId: 's2', preferences: { notifications: { newJobs: false } } },
+        { staffUserId: 's3', preferences: { notifications: { sound: false } } },
+      ]);
+      await events.emitAsync('delivery.created', { deliveryId: 'd1', orderId: 'o1' });
+      await flush();
+      // everyone still gets the in-app notification
+      expect(prisma.notification.createMany.mock.calls[0][0].data).toHaveLength(3);
+      expect(push.sendToOwners).toHaveBeenCalledTimes(2);
+      expect(push.sendToOwners).toHaveBeenCalledWith({ staffUserIds: ['s1'] }, expect.not.objectContaining({ sound: false }));
+      expect(push.sendToOwners).toHaveBeenCalledWith({ staffUserIds: ['s3'] }, expect.objectContaining({ sound: false }));
+      const all = push.sendToOwners.mock.calls.flatMap((c: any) => c[0].staffUserIds);
+      expect(all).not.toContain('s2');
     });
 
     it('does not break the event when the database write fails', async () => {
@@ -200,6 +219,82 @@ describe('NotificationsService', () => {
       await expect(
         events.emitAsync('order.created', { id: 'abcdef1234', customerId: 'c1' }),
       ).resolves.toBeDefined();
+    });
+  });
+
+  describe('reading, unread and cleanup', () => {
+    it('stays a plain array without paging, and pages with a limit', async () => {
+      prisma.notification.findMany.mockResolvedValue([{ id: 'n1', createdAt: new Date() }]);
+      expect(Array.isArray(await svc.findMine(customer))).toBe(true);
+      const at = new Date('2026-10-24T10:00:00Z');
+      prisma.notification.findMany.mockResolvedValue([{ id: 'n3', createdAt: at }, { id: 'n2', createdAt: at }]);
+      const page: any = await svc.findMine(customer, { limit: 1 });
+      expect(prisma.notification.findMany.mock.calls.at(-1)[0].take).toBe(2);
+      expect(page.items).toHaveLength(1);
+      expect(page.nextCursor).toEqual(expect.any(String));
+    });
+
+    it('filters to unread only', async () => {
+      await svc.findMine(partner, { unread: true });
+      expect(prisma.notification.findMany.mock.calls.at(-1)[0].where).toEqual({ staffUserId: 's1', isRead: false });
+    });
+
+    it('counts unread for the owner only', async () => {
+      prisma.notification.count.mockResolvedValue(4);
+      await expect(svc.unreadCount(partner)).resolves.toEqual({ unread: 4 });
+      expect(prisma.notification.count).toHaveBeenCalledWith({ where: { staffUserId: 's1', isRead: false } });
+    });
+
+    it('can mark one notification unread again', async () => {
+      prisma.notification.updateMany.mockResolvedValue({ count: 1 });
+      prisma.notification.findUnique.mockResolvedValue({ id: 'n1', isRead: false });
+      await svc.setRead('n1', partner, false);
+      expect(prisma.notification.updateMany).toHaveBeenCalledWith({ where: { id: 'n1', staffUserId: 's1' }, data: { isRead: false } });
+    });
+
+    it('marks all read for the owner only', async () => {
+      prisma.notification.updateMany.mockResolvedValue({ count: 3 });
+      await expect(svc.markAllRead(customer)).resolves.toEqual({ count: 3, updated: 3 });
+      expect(prisma.notification.updateMany).toHaveBeenCalledWith({ where: { userId: 'c1', isRead: false }, data: { isRead: true } });
+    });
+
+    it('deletes only the owner\'s notification, and 404s for someone else\'s', async () => {
+      prisma.notification.deleteMany.mockResolvedValueOnce({ count: 1 });
+      await expect(svc.remove('n1', partner)).resolves.toEqual({ removed: true });
+      expect(prisma.notification.deleteMany).toHaveBeenCalledWith({ where: { id: 'n1', staffUserId: 's1' } });
+      prisma.notification.deleteMany.mockResolvedValueOnce({ count: 0 });
+      await expect(svc.remove('n2', partner)).rejects.toBeInstanceOf(NotFoundException);
+    });
+  });
+
+  describe('document review', () => {
+    const flush = () => new Promise((r) => setImmediate(r));
+
+    it('tells the partner when a document is approved or rejected, with the reason', async () => {
+      await events.emitAsync('partner.document.reviewed', { staffUserId: 's1', documentId: 'doc1', documentLabel: "Driver's licence", status: 'REJECTED', reason: 'Blurry' });
+      await flush();
+      expect(prisma.notification.create.mock.calls.at(-1)[0].data).toMatchObject({ staffUserId: 's1', type: 'DOCUMENT_REVIEWED', title: 'Document rejected' });
+      expect(prisma.notification.create.mock.calls.at(-1)[0].data.body).toContain('Blurry');
+      expect(push.sendToOwners).toHaveBeenCalledWith({ staffUserIds: ['s1'] }, expect.objectContaining({ data: expect.objectContaining({ type: 'DOCUMENT_REVIEWED', documentId: 'doc1' }) }));
+
+      await events.emitAsync('partner.document.reviewed', { staffUserId: 's1', documentId: 'doc2', documentLabel: 'ID card', status: 'APPROVED' });
+      await flush();
+      expect(prisma.notification.create.mock.calls.at(-1)[0].data.title).toBe('Document approved');
+    });
+  });
+
+  describe('support reply', () => {
+    const flush = () => new Promise((r) => setImmediate(r));
+
+    it('notifies a partner or a customer who got a reply', async () => {
+      await events.emitAsync('support.reply.created', { ticketId: 't1', staffUserId: 's1', subject: 'Late payout' });
+      await flush();
+      expect(prisma.notification.create.mock.calls.at(-1)[0].data).toMatchObject({ staffUserId: 's1', type: 'SUPPORT_REPLY' });
+
+      await events.emitAsync('support.reply.created', { ticketId: 't2', userId: 'c1', subject: 'Cold food' });
+      await flush();
+      expect(prisma.notification.create.mock.calls.at(-1)[0].data).toMatchObject({ userId: 'c1', type: 'SUPPORT_REPLY' });
+      expect(push.sendToOwners).toHaveBeenLastCalledWith({ userIds: ['c1'] }, expect.anything());
     });
   });
 });

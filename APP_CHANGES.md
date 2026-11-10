@@ -328,3 +328,45 @@ Admin console:
 
 Ship order: the backend can go out first. Older apps that read the removed fields just see them missing, which the tracking screen already handled as "no position yet".
 
+
+## Partner-app branch merged into main (Nov 2026)
+
+The `master` branch (partner-app work: wallet and cash-out, documents, staff sessions, lockout, idempotency, app config) is now part of `main`. Full partner-app details are in `PARTNER_APP_INTEGRATION.md`. What changes for apps built against `main`:
+
+All staff apps (admin console, partner app):
+
+- **Staff must sign in again once after this release.** Staff tokens now belong to a session; tokens issued before the release have none and get 401.
+- `POST /staff/login` also returns `refreshToken` and `expiresIn`. The access token lasts 12 hours by default. `POST /staff/refresh` `{ refreshToken }` swaps it for a new pair; `POST /staff/logout` ends this device's session.
+- A deactivated account logging in now gets **403** `ACCOUNT_DISABLED` (was 401). Five wrong passwords lock the account for 15 minutes: **429** `ACCOUNT_LOCKED` with `Retry-After`.
+- New: `POST /staff/password/forgot`, `/password/reset`, `/password/change`.
+- `PATCH /staff/users/:id/password` (admin) now also signs that person out everywhere.
+
+Delivery routes (`/logistics/...`):
+
+- Not your delivery: **403** (was 400). Delivery changed under you: **409** `DELIVERY_STATE_CHANGED` (was 400). Already taken: 409 `JOB_ALREADY_TAKEN`. Bad step: 400 `INVALID_STAGE_TRANSITION` with `allowed`.
+- New optional stage `PAY_VENDOR` between `EN_ROUTE_TO_PICKUP` and `PICKED_UP`. Delivery objects gain `stageHistory: [{ stage, at }]`.
+- The handover code can only be checked after pickup.
+- New: `GET /logistics/deliveries/:id`, `GET /logistics/me`, `POST /logistics/deliveries/:id/accept` (same as claim), wallet and documents routes.
+
+Support:
+
+- Replies have `fromAdmin`, `authorId`, and the text as both `message` and `body`. A ticket returns them as `replies` and again as `messages`.
+- Customers and partners can reply with `POST /support/tickets/:id/messages` `{ body }`. Admins keep `POST /support/tickets/:id/replies` `{ message }`.
+- Replying to a closed ticket is now **409** `TICKET_CLOSED` (was 400).
+
+Notifications:
+
+- `PATCH /notifications/read-all` answers `{ count, updated }` (same number).
+- `GET /notifications` without paging options still returns the latest 50 as an array. With `?limit=&cursor=` it returns `{ items, nextCursor }`.
+
+Errors:
+
+- Every error now also has `message`, `code` and `requestId`. The old `statusCode`, `error`, `path` and `timestamp` are unchanged.
+
+Customer app:
+
+- Orders: quantities must be whole numbers from 1 to 100, with at most 50 lines. Duplicate lines are merged.
+- Unpaid orders are cancelled and restocked after `ORDER_PAYMENT_TIMEOUT_MINUTES` (default 30), or 24 hours once an online payment was started.
+- Five wrong passwords lock the account for 15 minutes (429). Ten wrong codes across sign-up and reset lock the code flows for an hour (429).
+- A new code can be requested at most once a minute (429 on resend).
+- `GET /app/config?app=customer&version=` is available. Its `maintenance` follows the admin maintenance switch.

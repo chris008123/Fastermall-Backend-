@@ -31,7 +31,7 @@ function expectNoLocation(value: unknown) {
 describe('rider location route', () => {
   it('answers 410 Gone and never touches the database', () => {
     const prisma: any = { delivery: { updateMany: jest.fn(), findUnique: jest.fn() } };
-    const controller = new LogisticsController(new LogisticsService(prisma, { emit: jest.fn() } as any));
+    const controller = new LogisticsController(new LogisticsService(prisma, { emit: jest.fn() } as any), {} as any, {} as any, {} as any);
     expect(() => (controller as any).updateRiderLocation()).toThrow(GoneException);
     expect(() => (controller as any).updateRiderLocation()).toThrow(RIDER_LOCATION_REMOVED_MESSAGE);
     expect(prisma.delivery.updateMany).not.toHaveBeenCalled();

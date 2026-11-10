@@ -1,4 +1,4 @@
-import { IsOptional, IsString, MinLength } from 'class-validator';
+import { IsOptional, IsString, IsUUID, MinLength } from 'class-validator';
 
 export class CreateVendorDto {
   @IsString()
@@ -8,4 +8,9 @@ export class CreateVendorDto {
   @IsOptional()
   @IsString()
   location?: string;
+
+  // The VENDOR staff account that may manage this vendor's menu.
+  @IsOptional()
+  @IsUUID()
+  ownerStaffId?: string;
 }

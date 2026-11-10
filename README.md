@@ -169,3 +169,13 @@ new columns on every staff lookup, so without them staff login fails.
 Delivery handover-code secrets (`deliveryCodeHash`, `deliveryCodeEncrypted`,
 attempt counters) are never returned by any endpoint; see
 `src/shared/utils/delivery-secrets.ts`.
+
+## Deploying the partner-app merge (Nov 2026)
+
+Run `npx prisma migrate deploy` before starting the new code. It applies the
+partner-app migrations (dated Oct 17 to Nov 1) and
+`20261110120000_merge_support_messages_into_replies`. They were checked
+against databases built from `main` and from `master`, and both end up
+matching the schema. All staff must sign in again once (staff tokens now
+need a session). See `APP_CHANGES.md` and `PARTNER_APP_INTEGRATION.md`.
+

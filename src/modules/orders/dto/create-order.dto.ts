@@ -1,7 +1,10 @@
 import {
+  ArrayMaxSize,
   IsArray,
   IsEnum,
+  IsInt,
   IsNumber,
+  Max,
   IsOptional,
   IsString,
   Min,
@@ -19,8 +22,9 @@ export class OrderItemInput {
   @IsString()
   menuItemId?: string;
 
-  @IsNumber()
+  @IsInt()
   @Min(1)
+  @Max(100)
   quantity: number;
 }
 
@@ -29,6 +33,7 @@ export class CreateOrderDto {
   type: OrderType;
 
   @IsArray()
+  @ArrayMaxSize(50)
   @ValidateNested({ each: true })
   @Type(() => OrderItemInput)
   items: OrderItemInput[];

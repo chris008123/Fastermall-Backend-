@@ -80,6 +80,8 @@ export class PaymentsController {
   @Get('callback')
   callback(@Res() res: Response) {
     res
+      // The API-wide CSP blocks everything; this one page needs its inline style.
+      .setHeader('Content-Security-Policy', "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'")
       .type('html')
       .send(
         '<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>Payment</title></head>' +

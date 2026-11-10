@@ -225,13 +225,13 @@ describe('LogisticsService — food-only rule for delivery partners', () => {
     it('rejects when the status changed between read and write', async () => {
       prisma.delivery.findUnique.mockResolvedValue(delivery('EN_ROUTE_TO_PICKUP'));
       tx.delivery.updateMany.mockResolvedValue({ count: 0 });
-      await expect(svc.updateStatus('d1', dto('PICKED_UP'), 's1')).rejects.toBeInstanceOf(BadRequestException);
+      await expect(svc.updateStatus('d1', dto('PICKED_UP'), 's1')).rejects.toBeInstanceOf(ConflictException);
       expect(tx.deliveryStatusEvent.create).not.toHaveBeenCalled();
     });
 
     it('rejects a partner who does not own the delivery', async () => {
       prisma.delivery.findUnique.mockResolvedValue({ ...delivery('PICKED_UP'), partnerId: 'other' });
-      await expect(svc.updateStatus('d1', dto('EN_ROUTE_TO_CUSTOMER'), 's1')).rejects.toBeInstanceOf(BadRequestException);
+      await expect(svc.updateStatus('d1', dto('EN_ROUTE_TO_CUSTOMER'), 's1')).rejects.toBeInstanceOf(ForbiddenException);
     });
 
     it.each(['EN_ROUTE_TO_PICKUP', 'PICKED_UP', 'EN_ROUTE_TO_CUSTOMER'])(
@@ -256,7 +256,7 @@ describe('LogisticsService — food-only rule for delivery partners', () => {
 
     it('R1: a partner not assigned to the delivery cannot fail it', async () => {
       prisma.delivery.findUnique.mockResolvedValue({ ...delivery('PICKED_UP'), partnerId: 'other' });
-      await expect(svc.updateStatus('d1', dto('FAILED'), 's1')).rejects.toBeInstanceOf(BadRequestException);
+      await expect(svc.updateStatus('d1', dto('FAILED'), 's1')).rejects.toBeInstanceOf(ForbiddenException);
       expect(prisma.$transaction).not.toHaveBeenCalled();
     });
 
@@ -272,7 +272,7 @@ describe('LogisticsService — food-only rule for delivery partners', () => {
 
     it('R7: an unclaimed delivery still has to go through claim', async () => {
       prisma.delivery.findUnique.mockResolvedValue({ ...delivery('ASSIGNED'), partnerId: null });
-      await expect(svc.updateStatus('d1', dto('EN_ROUTE_TO_PICKUP'), 's1')).rejects.toBeInstanceOf(BadRequestException);
+      await expect(svc.updateStatus('d1', dto('EN_ROUTE_TO_PICKUP'), 's1')).rejects.toBeInstanceOf(ForbiddenException);
       expect(prisma.$transaction).not.toHaveBeenCalled();
     });
   });
@@ -392,12 +392,12 @@ describe('LogisticsService — food-only rule for delivery partners', () => {
 
       it('rejects an admin who did not accept the delivery', async () => {
         prisma.delivery.findUnique.mockResolvedValue(market({ status: 'PICKED_UP', claimedByStaffId: 'admin2' }));
-        await expect(svc.updateStatus('m1', dto('EN_ROUTE_TO_CUSTOMER'), 'admin1', 'ADMIN')).rejects.toBeInstanceOf(BadRequestException);
+        await expect(svc.updateStatus('m1', dto('EN_ROUTE_TO_CUSTOMER'), 'admin1', 'ADMIN')).rejects.toBeInstanceOf(ForbiddenException);
       });
 
       it('rejects an unaccepted delivery (must go through claim)', async () => {
         prisma.delivery.findUnique.mockResolvedValue(market());
-        await expect(svc.updateStatus('m1', dto('EN_ROUTE_TO_PICKUP'), 'admin1', 'ADMIN')).rejects.toBeInstanceOf(BadRequestException);
+        await expect(svc.updateStatus('m1', dto('EN_ROUTE_TO_PICKUP'), 'admin1', 'ADMIN')).rejects.toBeInstanceOf(ForbiddenException);
       });
 
       it('rejects a delivery partner', async () => {

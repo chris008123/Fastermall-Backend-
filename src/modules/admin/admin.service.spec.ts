@@ -29,6 +29,7 @@ function setup() {
     staffUser: model([]),
     driverEarning: model([]),
     partnerPayout: model([]),
+    payoutRequest: model([]),
     adminAuditLog: model([{ id: 'log1' }], 1),
     deliveryPartnerProfile: model([]),
     user: model([]),
@@ -146,6 +147,20 @@ describe('AdminService.listPartners', () => {
     expect(prisma.staffUser.findMany.mock.calls[0][0].select).not.toHaveProperty('passwordHash');
   });
 
+  it("counts the partner's own app cash-outs (pending or paid, with fee) as paid out", async () => {
+    const { svc, prisma } = setup();
+    prisma.staffUser.findMany.mockResolvedValue([
+      { id: 's1', fullName: 'Kofi', email: null, phone: null, isVerified: true, createdAt: 't', deliveryProfile: { id: 'p1', type: 'WALKING', isAvailable: false, vehiclePlate: null } },
+    ]);
+    prisma.driverEarning.groupBy.mockResolvedValue([{ partnerId: 'p1', _sum: { amount: new Prisma.Decimal('135.00') } }]);
+    prisma.partnerPayout.groupBy.mockResolvedValue([{ partnerId: 'p1', _sum: { amount: new Prisma.Decimal('100.50') } }]);
+    prisma.payoutRequest.groupBy.mockResolvedValue([{ partnerId: 'p1', _sum: { amountPesewas: 2000, feePesewas: 50 } }]);
+
+    const [kofi] = await svc.listPartners();
+    expect(kofi).toMatchObject({ totalPaidOut: '121', balance: '14' }); // 100.50 + 20.50; 135 - 121
+    expect(prisma.payoutRequest.groupBy.mock.calls[0][0].where.status).toEqual({ in: ['PENDING', 'PAID'] });
+  });
+
   it('skips the aggregate queries when there are no partner profiles', async () => {
     const { svc, prisma } = setup();
     await expect(svc.listPartners()).resolves.toEqual([]);
@@ -208,10 +223,12 @@ describe('AdminService.dashboardStats revenue', () => {
 });
 
 describe('AdminService payouts', () => {
-  function withTx(earned: string | null, paid: string | null) {
+  function withTx(earned: string | null, paid: string | null, cashOutPesewas = 0) {
     const ctx = setup();
     const tx: any = {
+      $queryRaw: jest.fn().mockResolvedValue([]),
       driverEarning: { aggregate: jest.fn().mockResolvedValue({ _sum: { amount: earned && new Prisma.Decimal(earned) } }) },
+      payoutRequest: { aggregate: jest.fn().mockResolvedValue({ _sum: { amountPesewas: cashOutPesewas, feePesewas: 0 } }) },
       partnerPayout: {
         aggregate: jest.fn().mockResolvedValue({ _sum: { amount: paid && new Prisma.Decimal(paid) } }),
         create: jest.fn().mockImplementation(({ data }) => ({ id: 'po1', ...data })),
@@ -228,6 +245,14 @@ describe('AdminService payouts', () => {
     expect(tx.partnerPayout.create.mock.calls[0][0].data).toMatchObject({ partnerId: 'p1', method: 'MOBILE_MONEY', reference: 'MM123', createdById: 'admin1' });
     expect(String(po.amount)).toBe('50');
     expect(prisma.$transaction.mock.calls[0][1]).toEqual({ isolationLevel: 'Serializable' });
+    expect(tx.$queryRaw).toHaveBeenCalled(); // same partner-row lock as a cash-out
+  });
+
+  it("leaves room for the partner's own pending/paid cash-outs", async () => {
+    const { svc, tx } = withTx('150', '100', 3000); // GHS 30 already cashed out in the app
+    await expect(svc.createPayout('s1', { amount: 20.01 }, 'a')).rejects.toBeInstanceOf(BadRequestException);
+    await expect(svc.createPayout('s1', { amount: 20 }, 'a')).resolves.toBeDefined();
+    expect(tx.partnerPayout.create).toHaveBeenCalledTimes(1);
   });
 
   it('refuses more than is owed, and unknown partners', async () => {

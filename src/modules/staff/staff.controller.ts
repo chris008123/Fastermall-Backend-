@@ -5,7 +5,12 @@ import { LoginStaffDto } from './dto/login-staff.dto';
 import { CreateStaffDto } from './dto/create-staff.dto';
 import { BootstrapAdminDto } from './dto/bootstrap-admin.dto';
 import { UpdateStaffDto } from './dto/update-staff.dto';
+import { ForgotStaffPasswordDto } from './dto/forgot-staff-password.dto';
 import { ResetStaffPasswordDto } from './dto/reset-staff-password.dto';
+import { AdminSetStaffPasswordDto } from './dto/admin-set-password.dto';
+import { ChangeStaffPasswordDto } from './dto/change-staff-password.dto';
+import { LogoutDto } from './dto/logout.dto';
+import { RefreshTokenDto } from './dto/refresh-token.dto';
 import { SetStaffActiveDto } from './dto/set-staff-active.dto';
 import { JwtAuthGuard } from '../../shared/guards/jwt-auth.guard';
 import { RolesGuard } from '../../shared/guards/roles.guard';
@@ -28,6 +33,41 @@ export class StaffController {
   @Post('login')
   login(@Body() dto: LoginStaffDto) {
     return this.staffService.login(dto);
+  }
+
+  // Public: the access token has usually expired by the time this is called.
+  @Throttle({ default: { limit: 20, ttl: 60_000 } })
+  @Post('refresh')
+  refresh(@Body() dto: RefreshTokenDto) {
+    return this.staffService.refresh(dto.refreshToken);
+  }
+
+  @Throttle({ default: { limit: 3, ttl: 60_000 } })
+  @Post('password/forgot')
+  forgotPassword(@Body() dto: ForgotStaffPasswordDto) {
+    return this.staffService.forgotPassword(dto);
+  }
+
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
+  @Post('password/reset')
+  resetPassword(@Body() dto: ResetStaffPasswordDto) {
+    return this.staffService.resetPassword(dto);
+  }
+
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
+  @UseGuards(JwtAuthGuard)
+  @Post('password/change')
+  changePassword(
+    @CurrentUser() user: { userId: string; sessionId?: string },
+    @Body() dto: ChangeStaffPasswordDto,
+  ) {
+    return this.staffService.changePassword(user.userId, user.sessionId, dto);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Post('logout')
+  logout(@CurrentUser() user: { userId: string; sessionId?: string }, @Body() dto: LogoutDto) {
+    return this.staffService.logout(user.sessionId, user.userId, dto?.pushToken);
   }
 
   @UseGuards(JwtAuthGuard)
@@ -57,11 +97,12 @@ export class StaffController {
     return this.staffService.updateStaff(id, dto);
   }
 
+  // Admin sets a new password; every session of that account ends.
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(StaffRole.ADMIN)
   @Patch('users/:id/password')
-  resetPassword(@Param('id') id: string, @Body() dto: ResetStaffPasswordDto) {
-    return this.staffService.resetPassword(id, dto.password);
+  adminSetPassword(@Param('id') id: string, @Body() dto: AdminSetStaffPasswordDto) {
+    return this.staffService.adminSetPassword(id, dto.password);
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard)
