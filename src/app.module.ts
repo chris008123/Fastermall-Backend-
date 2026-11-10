@@ -21,6 +21,7 @@ import { AdminModule } from './modules/admin/admin.module';
 import { AddressesModule } from './modules/addresses/addresses.module';
 import { EmailModule } from './shared/email/email.module';
 import { SettingsModule } from './modules/settings/settings.module';
+import { FaqModule } from './modules/faq/faq.module';
 import { AuditInterceptor } from './shared/interceptors/audit.interceptor';
 
 @Module({
@@ -44,6 +45,7 @@ import { AuditInterceptor } from './shared/interceptors/audit.interceptor';
     AppConfigModule,
     AdminModule,
     AddressesModule,
+    FaqModule,
     EmailModule,
   ],
   providers: [

@@ -2,7 +2,7 @@ import { BadRequestException, ServiceUnavailableException } from '@nestjs/common
 import { Reflector } from '@nestjs/core';
 import { GUARDS_METADATA } from '@nestjs/common/constants';
 import { StaffRole } from '@prisma/client';
-import { SettingsService } from './settings.service';
+import { normalizeWhatsAppNumber, SettingsService, whatsappUrl } from './settings.service';
 import { SettingsController } from './settings.controller';
 import { ROLES_KEY } from '../../shared/decorators/roles.decorator';
 import { RolesGuard } from '../../shared/guards/roles.guard';
@@ -25,6 +25,7 @@ describe('SettingsService', () => {
       partnerEarningPerDelivery: 15,
       maintenanceMode: false,
       maintenanceMessage: expect.any(String),
+      whatsappContactNumber: '',
     });
   });
 
@@ -83,11 +84,64 @@ describe('SettingsService', () => {
   });
 });
 
+describe('WhatsApp contact number', () => {
+  it.each([
+    ['+233 24 123 4567', '233241234567'],
+    ['0241234567', '233241234567'],
+    ['233241234567', '233241234567'],
+    ['00233-24-123-4567', '233241234567'],
+    ['(024) 123 4567', '233241234567'],
+    ['', ''],
+  ])('normalizes %p to %p', (input, out) => {
+    expect(normalizeWhatsAppNumber(input)).toBe(out);
+  });
+
+  it('builds the wa.me link, or null without a number', () => {
+    expect(whatsappUrl('233241234567')).toBe('https://wa.me/233241234567');
+    expect(whatsappUrl('')).toBeNull();
+    expect(whatsappUrl(null)).toBeNull();
+  });
+
+  it('is stored normalized, and can be cleared with an empty string', async () => {
+    const { svc, prisma } = setup();
+    await svc.update({ whatsappContactNumber: '+233 24 123 4567' }, 'a1');
+    expect(prisma.platformSetting.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({ create: expect.objectContaining({ key: 'whatsappContactNumber', value: '233241234567' }) }),
+    );
+    await svc.update({ whatsappContactNumber: '' }, 'a1');
+    expect(prisma.platformSetting.upsert).toHaveBeenLastCalledWith(
+      expect.objectContaining({ update: { value: '', updatedById: 'a1' } }),
+    );
+  });
+
+  it('refuses something that is not a phone number, saving nothing', async () => {
+    const { svc, prisma } = setup();
+    for (const bad of ['12345', 'call me', '0' + '1'.repeat(20), 233241234567 as any]) {
+      await expect(svc.update({ whatsappContactNumber: bad }, 'a1')).rejects.toBeInstanceOf(BadRequestException);
+    }
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+});
+
 describe('SettingsController', () => {
   it('public settings hide the message unless maintenance is on, and never include partner pay', async () => {
     const { svc } = setup();
     const res = await new SettingsController(svc).publicSettings();
-    expect(res).toEqual({ marketplaceDeliveryFee: 7, laundryPickupFee: 5, maintenanceMode: false, maintenanceMessage: null, acceptedPaymentMethods: ['MOBILE_MONEY', 'CARD'] });
+    expect(res).toEqual({
+      marketplaceDeliveryFee: 7,
+      laundryPickupFee: 5,
+      maintenanceMode: false,
+      maintenanceMessage: null,
+      acceptedPaymentMethods: ['MOBILE_MONEY', 'CARD'],
+      whatsappContactNumber: null,
+      whatsappUrl: null,
+    });
+  });
+
+  it('public settings give the WhatsApp link once a number is set', async () => {
+    const { svc } = setup([{ key: 'whatsappContactNumber', value: '233241234567' }]);
+    const res = await new SettingsController(svc).publicSettings();
+    expect(res).toMatchObject({ whatsappContactNumber: '233241234567', whatsappUrl: 'https://wa.me/233241234567' });
   });
 
   it.each(['getAll', 'update'])('%s is ADMIN only', (name) => {

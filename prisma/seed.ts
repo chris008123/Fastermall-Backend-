@@ -499,6 +499,90 @@ async function main() {
   console.log('Laundry seed completed successfully.');
 
   // ============================================================
+  // FAQ
+  // ============================================================
+
+  console.log('Seeding FAQs...');
+
+  // Starter questions. Created only if missing (update: {}), so answers an
+  // admin has edited are never overwritten by a later seed.
+  const faqs = [
+    {
+      id: 'faq-what-is-fastermall',
+      category: 'About Fastermall',
+      sortOrder: 0,
+      question: 'What is Fastermall?',
+      answer:
+        'Fastermall is one app for shopping and services: order products from the marketplace, get food from campus vendors, and send your laundry, all delivered to you.',
+    },
+    {
+      id: 'faq-how-to-order',
+      category: 'Orders',
+      sortOrder: 0,
+      question: 'How do I place an order?',
+      answer:
+        'Add items to your cart, choose your delivery address, then pay at checkout. You can follow the order from the Orders screen.',
+    },
+    {
+      id: 'faq-track-order',
+      category: 'Orders',
+      sortOrder: 1,
+      question: 'How do I know where my order is?',
+      answer:
+        'Open the order in the Orders screen to see its current stage. You also get a notification each time it moves forward.',
+    },
+    {
+      id: 'faq-delivery-code',
+      category: 'Orders',
+      sortOrder: 2,
+      question: 'What is the delivery code?',
+      answer:
+        'Each order has a 6-digit code shown on the order screen. Give it to the rider only when you have your items. It confirms the order was handed to you.',
+    },
+    {
+      id: 'faq-payment-methods',
+      category: 'Payments',
+      sortOrder: 0,
+      question: 'How can I pay?',
+      answer: 'You can pay with mobile money or a bank card. Cash payment is not available.',
+    },
+    {
+      id: 'faq-refunds',
+      category: 'Payments',
+      sortOrder: 1,
+      question: 'How do refunds work?',
+      answer:
+        'If your order is refunded, the money goes back to the mobile money wallet or card you paid with. It can take a few days to arrive. You will get a notification when the refund is issued.',
+    },
+    {
+      id: 'faq-laundry',
+      category: 'Laundry',
+      sortOrder: 0,
+      question: 'How does laundry pickup work?',
+      answer:
+        'Choose your items in the Laundry section and request a pickup. We collect the bag from your address, and you can follow each stage of the wash in the app until it is delivered back to you.',
+    },
+    {
+      id: 'faq-contact',
+      category: 'Help',
+      sortOrder: 0,
+      question: 'How do I contact Fastermall?',
+      answer:
+        'Tap Contact Us to chat with us on WhatsApp. You can also open a support ticket from the Help screen.',
+    },
+  ];
+
+  for (const faq of faqs) {
+    await prisma.faq.upsert({
+      where: { id: faq.id },
+      update: {},
+      create: faq,
+    });
+  }
+
+  console.log(`Seeded ${faqs.length} FAQs.`);
+
+  // ============================================================
   // SUMMARY
   // ============================================================
 

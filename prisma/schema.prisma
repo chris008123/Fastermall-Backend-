@@ -725,3 +725,19 @@ model Address {
   @@index([userId])
   @@map("addresses")
 }
+
+// A Frequently Asked Question shown in the apps (GET /faqs). Admins manage
+// them; only published ones are shown. Ordered by category, then sortOrder.
+model Faq {
+  id          String   @id @default(uuid())
+  question    String
+  answer      String
+  category    String?
+  sortOrder   Int      @default(0)
+  isPublished Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([isPublished, category, sortOrder])
+  @@map("faqs")
+}

@@ -1,6 +1,6 @@
 import { Injectable, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { SettingsService } from '../settings/settings.service';
+import { SettingsService, whatsappUrl } from '../settings/settings.service';
 
 export type AppName = 'partner' | 'customer';
 
@@ -52,6 +52,9 @@ export class AppConfigService {
       support: {
         phone: env('SUPPORT_PHONE') ?? null,
         email: env('SUPPORT_EMAIL') ?? null,
+        // The manager's WhatsApp (admin setting), for "Contact us".
+        whatsapp: platform?.whatsappContactNumber || null,
+        whatsappUrl: whatsappUrl(platform?.whatsappContactNumber),
       },
       legal: {
         privacyUrl: env('PRIVACY_URL') ?? null,

@@ -52,16 +52,17 @@ Each feature is planned as its own branch, merged into `main`, following the exi
 - [x] Walking vs motorcycle (`determinePartnerType`) uses `distanceKm` only and doesn't depend on live location. It is left intact, and `distanceKm` is still returned.
 - [x] Tests: `rider-location.spec.ts` replaced by `live-location-removed.spec.ts`. APP_CHANGES updated (the old "Share rider location" section is marked removed).
 
-### 2.13 WhatsApp Contact Us `[ ]`
-- [ ] Add a `whatsappContactNumber` platform setting (admin-editable, validated as an international number such as `233XXXXXXXXX`).
-- [ ] Make `GET /settings` return `whatsappContactNumber` and a ready-made `whatsappUrl` (`https://wa.me/<number>`), or `null` while it's unset.
-- [ ] *Blocked on:* the manager's number. The setting ships empty and the admin fills it in.
+### 2.13 WhatsApp Contact Us `[x]`
+- [x] `whatsappContactNumber` platform setting, editable with `PATCH /admin/settings`. Any common format is normalized to `233XXXXXXXXX` (Ghana local `0…` gets 233); it is validated as 10–15 digits with country code, and `""` clears it.
+- [x] `GET /settings` returns `whatsappContactNumber` and `whatsappUrl` (`https://wa.me/<number>`), both `null` until set. `GET /app/config` also returns them under `support`.
+- [ ] *Still needed:* the manager's real number. An admin enters it once the app is live; nothing in code needs changing.
 
-### 2.14 FAQ `[ ]`
-- [ ] Add a `Faq` model: `question`, `answer`, `category?`, `sortOrder`, `isPublished`, timestamps.
-- [ ] Public `GET /faqs`: published entries only, grouped or ordered by category and `sortOrder`.
-- [ ] Admin CRUD: `GET/POST /admin/faqs`, `PATCH/DELETE /admin/faqs/:id`. These are recorded by the audit log automatically.
-- [ ] Seed a few starter FAQs (`prisma/seed.ts`).
+### 2.14 FAQ `[x]`
+- [x] `Faq` model (`question`, `answer`, `category?`, `sortOrder`, `isPublished`, timestamps), migration `20261110150000_add_faqs` (new table only).
+- [x] Public `GET /faqs` (optional `?category=`) returns published questions in display order as `items`, plus `categories: [{ name, items }]`. Cached 5 minutes.
+- [x] Admin `GET/POST /admin/faqs`, `PATCH/DELETE /admin/faqs/:id`, recorded in the audit log.
+- [x] 8 starter FAQs in `prisma/seed.ts`, created only if missing, so admin edits are never overwritten.
+- [x] Verified on a throwaway Postgres: migration from current `main` has no drift; seeding twice keeps 8 rows and keeps edits; full HTTP smoke test of every new route.
 
 ### 2.4 Notification popup fix and Delivery App notification setup `[ ]`
 - [ ] Give broadcasts a dedicated `announcements` channel id and always send `sound: 'default'` and `priority: 'high'`. Document the exact channel ids the apps must create (`orders`, `deliveries`, `announcements`) with HIGH importance and sound.
@@ -183,3 +184,4 @@ After each step: `npm test`, `npm run build`, then update this log, `README.md` 
 | 10 Nov 2026 | 2.5 Remove cash payments | Done on branch `remove-cash-payments`. 261/261 tests pass, build clean. The Prisma client was stale locally; ran `npx prisma generate` before testing. |
 | 10 Nov 2026 | 2.6 Remove live maps and location | Done on branch `remove-live-maps` (pulled `main` first, up to date). 266/266 tests pass, build clean. No migration. |
 | 10 Nov 2026 | Merge `origin/master` into `main` | Partner-app branch (88 commits) merged on `merge-master`; 19 conflicts resolved, duplicates unified (support replies, partner payouts, staff deactivation). Live location from that branch disabled to match 2.6. Lost code restored (customer lockout, vendor-owner schema, security headers); missing account-deletion feature removed from routes. Migrations verified on a throwaway Postgres for fresh, main-history and master-history databases (no drift). Tests and build pass. `backup-connecting-to-frontend` left unmerged (superseded first-version backup). |
+| 10 Nov 2026 | 2.13 WhatsApp contact + 2.14 FAQ | Built directly on `main` (no branches from now on, per user). Unit tests added; migration, seed and routes verified against a throwaway Postgres. |

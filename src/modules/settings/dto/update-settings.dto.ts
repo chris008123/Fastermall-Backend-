@@ -16,4 +16,9 @@ export class UpdateSettingsDto {
 
   @IsOptional() @IsString() @MaxLength(300)
   maintenanceMessage?: string;
+
+  // "Contact us" WhatsApp number. Any common format; stored as 233XXXXXXXXX.
+  // An empty string removes it.
+  @IsOptional() @IsString() @MaxLength(30)
+  whatsappContactNumber?: string;
 }

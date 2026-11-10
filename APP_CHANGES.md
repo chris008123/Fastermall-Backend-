@@ -370,3 +370,17 @@ Customer app:
 - Five wrong passwords lock the account for 15 minutes (429). Ten wrong codes across sign-up and reset lock the code flows for an hour (429).
 - A new code can be requested at most once a minute (429 on resend).
 - `GET /app/config?app=customer&version=` is available. Its `maintenance` follows the admin maintenance switch.
+
+## WhatsApp "Contact us" and FAQ (2.13, 2.14)
+
+Needs migration `20261110150000_add_faqs` (a new table only). Run `npx prisma db seed` once to add the starter questions; it never overwrites answers an admin has edited.
+
+Customer app:
+
+- **Contact us:** read `whatsappUrl` from `GET /settings` (also in `GET /app/config` → `support.whatsappUrl`) and open it. It is `https://wa.me/233XXXXXXXXX`, which opens a WhatsApp chat with the manager. Hide the button while it is `null`, which it is until an admin sets the number.
+- **FAQ:** `GET /faqs` (no login) returns `{ items, categories }`. `items` is every published question in display order. `categories` is `[{ name, items }]` for a sectioned screen (`name: null` = uncategorised, listed last). Add `?category=Payments` to show one section. Each item is `{ id, question, answer, category, sortOrder, updatedAt }`.
+
+Admin console:
+
+- WhatsApp number: `PATCH /admin/settings` `{ "whatsappContactNumber": "0241234567" }`. Any common format works (`+233 24 123 4567`, `0241234567`); it is stored as `233241234567`. Send `""` to remove it. A bad number gets 400.
+- FAQs: `GET /admin/faqs` (all, including unpublished), `POST /admin/faqs` `{ question, answer, category?, sortOrder?, isPublished? }`, `PATCH /admin/faqs/:id` (any of those fields), `DELETE /admin/faqs/:id`. Question 5–300 characters, answer up to 5000. `isPublished: false` hides a question without deleting it. Changes appear in the audit log.

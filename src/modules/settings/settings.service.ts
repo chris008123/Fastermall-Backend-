@@ -20,9 +20,32 @@ export interface PlatformSettings {
   maintenanceMode: boolean;
   /** Shown to customers while maintenance mode is on. */
   maintenanceMessage: string;
+  /**
+   * The manager's WhatsApp number for "Contact us", in international form
+   * without + (e.g. 233241234567). Empty until an admin sets it.
+   */
+  whatsappContactNumber: string;
 }
 
 export type SettingKey = keyof PlatformSettings;
+
+/**
+ * Turns what an admin types into the form wa.me needs: digits only, country
+ * code first, no +. "+233 24 123 4567", "0241234567" (Ghana local) and
+ * "233241234567" all become "233241234567". Other values pass through and
+ * are then checked by the rule below.
+ */
+export function normalizeWhatsAppNumber(value: unknown): unknown {
+  if (typeof value !== 'string') return value;
+  const digits = value.trim().replace(/[\s\-().]/g, '').replace(/^\+/, '').replace(/^00/, '');
+  if (/^0\d{9}$/.test(digits)) return `233${digits.slice(1)}`;
+  return digits;
+}
+
+/** https://wa.me/<number>, or null when no number is set. */
+export function whatsappUrl(number: string | null | undefined): string | null {
+  return number ? `https://wa.me/${number}` : null;
+}
 
 const MONEY_MAX = 10_000;
 const CACHE_MS = 30_000;
@@ -38,6 +61,16 @@ const RULES: Record<SettingKey, Rule> = {
   partnerEarningPerDelivery: money,
   maintenanceMode: (v) => (typeof v === 'boolean' ? null : 'must be true or false'),
   maintenanceMessage: (v) => (typeof v === 'string' && v.length <= 300 ? null : 'must be text of at most 300 characters'),
+  // Empty clears it. Otherwise 10 to 15 digits with the country code.
+  whatsappContactNumber: (v) =>
+    typeof v === 'string' && (v === '' || /^[1-9]\d{9,14}$/.test(v))
+      ? null
+      : 'must be a phone number with its country code, e.g. 233241234567 (or empty to remove it)',
+};
+
+// Applied to incoming values before the rules run.
+const NORMALIZE: Partial<Record<SettingKey, (v: unknown) => unknown>> = {
+  whatsappContactNumber: normalizeWhatsAppNumber,
 };
 export const SETTING_KEYS = Object.keys(RULES) as SettingKey[];
 
@@ -58,6 +91,7 @@ export class SettingsService {
       partnerEarningPerDelivery: 15,
       maintenanceMode: false,
       maintenanceMessage: 'Fastermall is down for maintenance. Please try again shortly.',
+      whatsappContactNumber: '',
     };
   }
 
@@ -84,7 +118,9 @@ export class SettingsService {
 
   /** Validates every given key first; nothing is saved if any is invalid. */
   async update(changes: Record<string, unknown>, staffId: string): Promise<PlatformSettings> {
-    const entries = Object.entries(changes ?? {});
+    const entries = Object.entries(changes ?? {}).map(
+      ([key, v]) => [key, NORMALIZE[key as SettingKey]?.(v) ?? v] as [string, unknown],
+    );
     if (entries.length === 0) throw new BadRequestException('Nothing to update');
     const errors: string[] = [];
     for (const [key, v] of entries) {

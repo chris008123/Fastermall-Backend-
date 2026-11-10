@@ -35,7 +35,7 @@ describe('AppConfigService', () => {
     const svc = make({ MAINTENANCE_MODE: 'true', MAINTENANCE_MESSAGE: 'Back at 6pm', SUPPORT_PHONE: '0241234567', PRIVACY_URL: 'https://fastermall.com/privacy' });
     const cfg = await svc.get('partner');
     expect(cfg.maintenance).toEqual({ enabled: true, message: 'Back at 6pm' });
-    expect(cfg.support).toEqual({ phone: '0241234567', email: null });
+    expect(cfg.support).toEqual({ phone: '0241234567', email: null, whatsapp: null, whatsappUrl: null });
     expect(cfg.legal).toEqual({ privacyUrl: 'https://fastermall.com/privacy', termsUrl: null });
     expect((await make({}).get('partner')).maintenance).toMatchObject({ enabled: false });
   });
@@ -45,5 +45,13 @@ describe('AppConfigService', () => {
     expect((await make({}, settings).get('customer')).maintenance).toEqual({ enabled: true, message: 'Stock-taking until 2pm' });
     settings.getAll.mockResolvedValue({ maintenanceMode: false, maintenanceMessage: 'x' });
     expect((await make({}, settings).get('customer')).maintenance.enabled).toBe(false);
+  });
+
+  it('includes the WhatsApp contact from the admin setting', async () => {
+    const settings = { getAll: jest.fn().mockResolvedValue({ maintenanceMode: false, maintenanceMessage: '', whatsappContactNumber: '233241234567' }) };
+    expect((await make({}, settings).get('customer')).support).toMatchObject({
+      whatsapp: '233241234567',
+      whatsappUrl: 'https://wa.me/233241234567',
+    });
   });
 });

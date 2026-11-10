@@ -1,6 +1,6 @@
 import { Body, Controller, Get, Patch, UseGuards } from '@nestjs/common';
 import { StaffRole } from '@prisma/client';
-import { SettingsService } from './settings.service';
+import { SettingsService, whatsappUrl } from './settings.service';
 import { UpdateSettingsDto } from './dto/update-settings.dto';
 import { JwtAuthGuard } from '../../shared/guards/jwt-auth.guard';
 import { RolesGuard } from '../../shared/guards/roles.guard';
@@ -23,6 +23,10 @@ export class SettingsController {
       maintenanceMessage: s.maintenanceMode ? s.maintenanceMessage : null,
       // The checkout options the app should offer. Cash is not among them.
       acceptedPaymentMethods: [...ACCEPTED_PAYMENT_METHODS],
+      // "Contact us": open whatsappUrl to start a chat with the manager.
+      // Both are null until an admin sets the number.
+      whatsappContactNumber: s.whatsappContactNumber || null,
+      whatsappUrl: whatsappUrl(s.whatsappContactNumber),
     };
   }
 
