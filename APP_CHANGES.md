@@ -463,3 +463,30 @@ Admin console:
 - `GET /admin/orders?deliveryDate=2026-11-08` gives one day's marketplace deliveries, sorted by window: a run sheet for that day.
 - Every order shows its window fields.
 - The admin who accepted a marketplace delivery is notified when the customer moves it.
+
+## Product images (2.2)
+
+Needs migration `20261110210000_add_product_images` (a new table only). Uses the existing `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY`. The public bucket `product-images` is created automatically on the first upload (change it with `PRODUCT_IMAGES_BUCKET`).
+
+Admin console:
+
+- **Upload:** `POST /marketplace/products/:id/images` as `multipart/form-data`, with one or more files in the field **`images`**.
+  - JPEG, PNG or WebP, at most 5 MB each (`PRODUCT_IMAGE_MAX_BYTES`), at most 5 per product (`PRODUCT_IMAGES_MAX`).
+  - The type is checked from the file's contents, so a renamed PDF is refused.
+  - If any file is refused, nothing is uploaded.
+  - Returns `{ productId, imageUrl, images }`.
+- **Reorder:** `PATCH /marketplace/products/:id/images/order` `{ imageIds: [...] }` lists every image once; the first becomes the main image.
+- **Delete:** `DELETE /marketplace/products/:id/images/:imageId` removes one photo (and its file); the next becomes the main image.
+- Deleting a product also deletes its photo files.
+- **Errors:**
+  - 400 `UNSUPPORTED_IMAGE_TYPE`, `NO_IMAGE` or `INVALID_IMAGE_ORDER`;
+  - 413 when the file is too large;
+  - 409 `TOO_MANY_IMAGES`;
+  - 503 `STORAGE_NOT_CONFIGURED` or `STORAGE_UNAVAILABLE`.
+
+Customer app:
+
+- Every product (list and detail) now has `images: [{ id, url, sortOrder }]` in display order.
+- `imageUrl` is still there and is always the first photo, so screens that only use `imageUrl` work unchanged. Use `images` for a gallery.
+- `GET /marketplace/products/:id/images` (public) returns the same list.
+- The bundled fallback image is only needed while `imageUrl` is `null`.

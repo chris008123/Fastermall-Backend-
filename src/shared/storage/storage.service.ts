@@ -75,6 +75,54 @@ export class StorageService {
     }
   }
 
+  // ───────── Public buckets (e.g. product images) ─────────
+
+  private readonly readyBuckets = new Set<string>();
+
+  private client$() {
+    this.storage(); // creates the client, or throws STORAGE_NOT_CONFIGURED
+    return this.client!;
+  }
+
+  /**
+   * Makes sure a PUBLIC bucket exists, creating it the first time. Files in it
+   * are readable by anyone with the URL, so only put things meant to be seen
+   * (product photos), never documents.
+   */
+  private async ensurePublicBucket(bucket: string) {
+    if (this.readyBuckets.has(bucket)) return;
+    const storage = this.client$().storage;
+    const { data } = await storage.getBucket(bucket);
+    if (!data) {
+      const { error } = await storage.createBucket(bucket, { public: true });
+      // "already exists" means another request created it just now.
+      if (error && !/exist/i.test(error.message)) this.unavailable('bucket setup', error);
+    } else if (!data.public) {
+      this.logger.warn(`Bucket ${bucket} is private: its files will not load in the apps`);
+    }
+    this.readyBuckets.add(bucket);
+  }
+
+  /** Uploads a file to a public bucket and returns its permanent URL. */
+  async uploadPublic(bucket: string, path: string, body: Buffer, contentType: string) {
+    await this.ensurePublicBucket(bucket);
+    const files = this.client$().storage.from(bucket);
+    const { error } = await files.upload(path, body, { contentType, upsert: false, cacheControl: '31536000' });
+    if (error) this.unavailable('upload', error);
+    return { path, publicUrl: files.getPublicUrl(path).data.publicUrl };
+  }
+
+  /** Best effort: never throws. */
+  async removeFromBucket(bucket: string, paths: string[]) {
+    if (paths.length === 0) return;
+    try {
+      const { error } = await this.client$().storage.from(bucket).remove(paths);
+      if (error) throw error;
+    } catch (error) {
+      this.logger.warn(`Could not remove ${paths.length} file(s) from ${bucket}: ${(error as Error).message}`);
+    }
+  }
+
   async createSignedDownload(path: string, seconds = 60) {
     const { data, error } = await this.storage().createSignedUrl(path, seconds);
     if (error || !data) this.unavailable('download URL', error);

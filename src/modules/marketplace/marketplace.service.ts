@@ -2,9 +2,11 @@ import {
   BadRequestException,
   Injectable,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../database/prisma.service';
+import { ProductImagesService } from './product-images.service';
 import { CreateCategoryDto } from './dto/create-category.dto';
 import { CreateProductDto } from './dto/create-product.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
@@ -14,9 +16,14 @@ import {
 } from './dto/list-products-query.dto';
 
 // The app shows the vendor's name on every product card.
+// Photos in display order; imageUrl is the first one.
 const PRODUCT_INCLUDE = {
   category: true,
   vendor: { select: { id: true, name: true } },
+  images: {
+    orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }, { id: 'asc' }],
+    select: { id: true, url: true, sortOrder: true },
+  },
 } satisfies Prisma.ProductInclude;
 
 // Every sort ends with id so pages never overlap or skip products that tie.
@@ -46,7 +53,10 @@ function productOrderBy(
 
 @Injectable()
 export class MarketplaceService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    @Optional() private readonly images?: ProductImagesService,
+  ) {}
 
   createCategory(dto: CreateCategoryDto) {
     return this.prisma.category.create({
@@ -171,9 +181,13 @@ export class MarketplaceService {
   async deleteProduct(id: string) {
     await this.findOneProduct(id);
 
+    // Read the photo paths first: the rows go with the product (cascade).
+    const imagePaths = (await this.images?.pathsOf(id)) ?? [];
+
     await this.prisma.product.delete({
       where: { id },
     });
+    await this.images?.removeFiles(imagePaths);
 
     return { deleted: true };
   }

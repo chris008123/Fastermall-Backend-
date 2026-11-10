@@ -1,5 +1,11 @@
 export default () => ({
   port: parseInt(process.env.PORT || '3000', 10),
+  productImages: {
+    // PUBLIC Supabase bucket, created automatically on first upload.
+    bucket: process.env.PRODUCT_IMAGES_BUCKET || 'product-images',
+    maxBytes: parseInt(process.env.PRODUCT_IMAGE_MAX_BYTES || String(5 * 1024 * 1024), 10),
+    maxPerProduct: parseInt(process.env.PRODUCT_IMAGES_MAX || '5', 10),
+  },
   documents: {
     bucket: process.env.DOCUMENTS_BUCKET || 'partner-documents',
     maxBytes: parseInt(process.env.DOCUMENT_MAX_BYTES || String(5 * 1024 * 1024), 10),

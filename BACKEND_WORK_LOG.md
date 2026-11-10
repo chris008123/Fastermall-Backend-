@@ -81,7 +81,44 @@ Each feature is planned as its own branch, merged into `main`, following the exi
 - [x] Verified on a throwaway Postgres: no drift. End-to-end run: an order placed at 20:37 got the next morning, the reschedule worked, an arbitrary date was refused, and the notification arrived.
 - [ ] *Open (2.8 pending decision):* windows run every day including weekends, there is no capacity limit per window, and food orders don't get windows. Change these if operations want otherwise.
 
-### 2.2 Product image upload `[ ]`
+### 2.2 Product image upload `[x]`
+- [x] Extended master's `StorageService` with public-bucket upload and delete. The `product-images` bucket is created automatically, public, with long cache headers.
+- [x] `ProductImage` model (url, path, type, size, sortOrder), migration `20261110210000_add_product_images` (new table only). `Product.imageUrl` is kept in sync as the first photo.
+- [x] Admin: upload (`multipart`, field `images`), reorder, delete. Type is checked from the bytes (JPEG/PNG/WebP). Up to 5 MB each and 5 per product (env-configurable). All-or-nothing: earlier files are cleaned up if a later upload fails. Deleting a product removes its files.
+- [x] Product responses include `images`, plus a public `GET /marketplace/products/:id/images`.
+- [x] Verified: unit tests; migration on a throwaway Postgres with no drift; HTTP checks of every refusal (401, 400 type, 413 size, 400 no file, 404) and of a valid image reaching storage. **Not verified:** a real upload to Supabase, because I didn't touch the production project. Try one upload after deploy.
+- [ ] Not done (pending decisions): cropping/resizing (the admin uploads ready-made images), and food vendor/menu images (the same service can be reused).
+
+### 2.13 WhatsApp Contact Us `[x]`
+- [x] `whatsappContactNumber` platform setting, editable with `PATCH /admin/settings`. Any common format is normalized to `233XXXXXXXXX` (Ghana local `0…` gets 233); it is validated as 10–15 digits with country code, and `""` clears it.
+- [x] `GET /settings` returns `whatsappContactNumber` and `whatsappUrl` (`https://wa.me/<number>`), both `null` until set. `GET /app/config` also returns them under `support`.
+- [ ] *Still needed:* the manager's real number. An admin enters it once the app is live; nothing in code needs changing.
+
+### 2.14 FAQ `[x]`
+- [x] `Faq` model (`question`, `answer`, `category?`, `sortOrder`, `isPublished`, timestamps), migration `20261110150000_add_faqs` (new table only).
+- [x] Public `GET /faqs` (optional `?category=`) returns published questions in display order as `items`, plus `categories: [{ name, items }]`. Cached 5 minutes.
+- [x] Admin `GET/POST /admin/faqs`, `PATCH/DELETE /admin/faqs/:id`, recorded in the audit log.
+- [x] 8 starter FAQs in `prisma/seed.ts`, created only if missing, so admin edits are never overwritten.
+- [x] Verified on a throwaway Postgres: migration from current `main` has no drift; seeding twice keeps 8 rows and keeps edits; full HTTP smoke test of every new route.
+
+### 2.4 Notification popup fix and Delivery App notification setup `[x]`
+- [x] Root cause on the backend: broadcasts had no Android channel, so they used Expo's fallback channel (no popup). They now use `orders` / `deliveries`, the channels every other push uses. I didn't add a new `announcements` channel: Android drops pushes for a channel id the phone doesn't have.
+- [x] Broadcasts skip deleted customers.
+- [x] `POST /notifications/test` (own phones) and `POST /admin/notifications/test` (any account): send a test push and return Expo's answer per phone, plus a hint. Push errors are now logged with the masked token and Expo's error code.
+- [x] Delivery App settings: master's `GET/PUT /logistics/me/preferences` already stored them. Now `jobUpdates` (accepted delivery cancelled) and `payments` (cash-out paid/failed, admin payout recorded) are acted on, `sound` applies to every partner push, and the in-app list always gets everything.
+- [ ] *App side (not backend):* create the `orders` and `deliveries` channels with MAX importance and sound, and set `Notifications.setNotificationHandler` so banners and sound show while the app is open. This is the most likely cause of "in the list but no popup". The exact code is in APP_CHANGES.md.
+
+### 2.8 Scheduled delivery windows and rescheduling `[x]`
+- [x] Helper `src/shared/utils/delivery-windows.ts` with the cut-offs (before 09:00 gives same-day morning; 09:00 to 14:59 gives same-day afternoon; 15:00 or later gives next morning), next windows, labels in Ghana time, and 14 unit tests including the requirement's 8/9 Nov example.
+- [x] `Order` fields `deliveryWindowStart/End`, `originalWindowStart`, `rescheduledAt`, `rescheduleCount`. Migration `20261110180000_add_delivery_windows` has nullable columns only.
+- [x] Marketplace orders get their window when they are created. Order responses include `deliveryWindow` with a label.
+- [x] `GET /orders/:id/delivery-windows` returns the original plus the next two, with availability and the reason when rescheduling is blocked.
+- [x] `PATCH /orders/:id/delivery-window` refuses any other date. It is allowed until the current window starts, while the order is pending, confirmed or preparing, and before pickup. The write is atomic (409 `ORDER_CHANGED` on a race). The customer is notified, and so is the admin who accepted the delivery.
+- [x] `GET /admin/orders?deliveryDate=YYYY-MM-DD` returns a day's deliveries sorted by window.
+- [x] Verified on a throwaway Postgres: no drift. End-to-end run: an order placed at 20:37 got the next morning, the reschedule worked, an arbitrary date was refused, and the notification arrived.
+- [ ] *Open (2.8 pending decision):* windows run every day including weekends, there is no capacity limit per window, and food orders don't get windows. Change these if operations want otherwise.
+
+### 2.2 Product image upload `[x]`
 - [ ] Add a `StorageService` (shared) using Supabase Storage with the service-role key. Uploads go to a public `product-images` bucket.
 - [ ] Admin `POST /marketplace/products/:id/images` (multipart, `file` field), using `@nestjs/platform-express` / multer, which is already installed.
 - [ ] Add a `ProductImage` model (`url`, `path`, `sortOrder`) so multiple images are possible. Keep `Product.imageUrl` as the primary image for backward compatibility.
@@ -183,3 +220,4 @@ After each step: `npm test`, `npm run build`, then update this log, `README.md` 
 | 10 Nov 2026 | 2.13 WhatsApp contact + 2.14 FAQ | Built directly on `main` (no branches from now on, per user). Unit tests added; migration, seed and routes verified against a throwaway Postgres. |
 | 10 Nov 2026 | 2.4 Notifications | Broadcast channel fix, test-push diagnostics, partner jobUpdates/payments/sound switches live. 548 tests pass; app booted against a throwaway DB and the new routes answered. No migration. |
 | 10 Nov 2026 | 2.8 Delivery windows | Built on `main`. 583 tests pass; migration and full reschedule flow verified against a throwaway Postgres. |
+| 10 Nov 2026 | 2.2 Product images | Built on `main`. 601 tests pass; upload route checked over HTTP without touching the real Supabase project. |

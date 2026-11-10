@@ -181,6 +181,9 @@ model Product {
   rating      Float?
   reviewCount Int                @default(0)
   reviews     ProductReview[]
+  // Photos in display order. imageUrl above is always the first one (or
+  // null), so apps that only read imageUrl keep working.
+  images      ProductImage[]
 
   @@map("products")
 }
@@ -750,4 +753,22 @@ model Faq {
 
   @@index([isPublished, category, sortOrder])
   @@map("faqs")
+}
+
+// A product photo stored in the public product-images bucket.
+model ProductImage {
+  id          String   @id @default(uuid())
+  productId   String
+  // Public URL the apps load.
+  url         String
+  // Path inside the bucket, used to delete the file.
+  path        String
+  contentType String
+  sizeBytes   Int
+  sortOrder   Int      @default(0)
+  createdAt   DateTime @default(now())
+  product     Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@index([productId, sortOrder])
+  @@map("product_images")
 }
