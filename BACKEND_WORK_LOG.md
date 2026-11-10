@@ -45,12 +45,12 @@ Each feature is planned as its own branch, merged into `main`, following the exi
 - [x] `GET /settings` returns `acceptedPaymentMethods`.
 - [x] Tests updated and added (`payments.service.spec.ts`, `orders.service.spec.ts`, `settings.service.spec.ts`). README and APP_CHANGES updated.
 
-### 2.6 Remove live maps and location `[ ]`
-- [ ] Disable `PATCH /logistics/deliveries/:id/location`, returning 410 Gone with a "feature removed" message.
-- [ ] Stop returning `riderLat/riderLng/riderLocationAt` (and pickup/dropoff coordinates) in customer-facing order and delivery responses.
-- [ ] Keep the DB columns and the address `lat/lng` (optional input, ignored for display) so the feature can be brought back later without data loss.
-- [ ] Check that walking vs motorcycle assignment does not depend on live location, and leave the `distanceKm` logic intact if it doesn't.
-- [ ] Update tests and the README.
+### 2.6 Remove live maps and location `[x]`
+- [x] `PATCH /logistics/deliveries/:id/location` now returns 410 Gone ("Location sharing has been removed…"). The service method and DTO were deleted, so nothing writes `rider*` any more.
+- [x] No response carries `riderLat/riderLng/riderLocationAt` or `pickup/dropoff Lat/Lng`. This is enforced in one place (`stripDeliverySecrets` + `SAFE_DELIVERY_SELECT` in `src/shared/utils/delivery-secrets.ts`), which covers customer orders, the logistics (partner/admin) routes and the admin views. The customer order list and single order now use the shared helper. Previously they hand-stripped only two of the four code secrets, so `deliveryCodeAttempts`/`LockedUntil` also stop leaking.
+- [x] DB columns kept. The saved-address `lat/lng` are still accepted, returned and copied onto the delivery's dropoff (stored, never displayed), so the feature can return without data loss.
+- [x] Walking vs motorcycle (`determinePartnerType`) uses `distanceKm` only and doesn't depend on live location. It is left intact, and `distanceKm` is still returned.
+- [x] Tests: `rider-location.spec.ts` replaced by `live-location-removed.spec.ts`. APP_CHANGES updated (the old "Share rider location" section is marked removed).
 
 ### 2.13 WhatsApp Contact Us `[ ]`
 - [ ] Add a `whatsappContactNumber` platform setting (admin-editable, validated as an international number such as `233XXXXXXXXX`).
@@ -181,3 +181,4 @@ After each step: `npm test`, `npm run build`, then update this log, `README.md` 
 | --- | --- | --- |
 | 10 Nov 2026 | Analysis | Read the requirements and the codebase; created this log. |
 | 10 Nov 2026 | 2.5 Remove cash payments | Done on branch `remove-cash-payments`. 261/261 tests pass, build clean. The Prisma client was stale locally; ran `npx prisma generate` before testing. |
+| 10 Nov 2026 | 2.6 Remove live maps and location | Done on branch `remove-live-maps` (pulled `main` first, up to date). 266/266 tests pass, build clean. No migration. |

@@ -214,10 +214,6 @@ export class OrdersService {
             laundryOrderId: true,
             partnerId: true,
             status: true,
-            pickupLat: true,
-            pickupLng: true,
-            dropoffLat: true,
-            dropoffLng: true,
             distanceKm: true,
             createdAt: true,
             updatedAt: true,
@@ -288,10 +284,6 @@ export class OrdersService {
             laundryOrderId: true,
             partnerId: true,
             status: true,
-            pickupLat: true,
-            pickupLng: true,
-            dropoffLat: true,
-            dropoffLng: true,
             distanceKm: true,
             createdAt: true,
             updatedAt: true,
@@ -331,14 +323,13 @@ export class OrdersService {
       orderBy: { createdAt: 'desc' },
     });
 
-    // The stored code hash and encrypted code never leave the server in a
-    // list. (A customer sees their code only when opening one order.)
-    return orders.map((order) => {
-      if (!order.delivery) return order;
-      const { deliveryCodeHash, deliveryCodeEncrypted, ...safeDelivery } =
-        order.delivery;
-      return { ...order, delivery: safeDelivery };
-    });
+    // The code secrets and location fields never leave the server. (A
+    // customer sees their code only when opening one order.)
+    return orders.map((order) =>
+      order.delivery
+        ? { ...order, delivery: stripDeliverySecrets(order.delivery) }
+        : order,
+    );
   }
 
   async findOne(id: string, customerId: string) {
@@ -375,15 +366,9 @@ export class OrdersService {
     }
 
     if (delivery) {
-      const {
-        deliveryCodeHash,
-        deliveryCodeEncrypted,
-        ...safeDelivery
-      } = delivery;
-
       return {
         ...order,
-        delivery: safeDelivery,
+        delivery: stripDeliverySecrets(delivery),
       };
     }
 

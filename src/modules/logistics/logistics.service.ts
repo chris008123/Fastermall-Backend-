@@ -19,7 +19,6 @@ import { PrismaService } from '../../database/prisma.service';
 import { SettingsService } from '../settings/settings.service';
 import { UpdatePartnerStatusDto } from './dto/update-partner-status.dto';
 import { UpdateDeliveryStatusDto } from './dto/update-delivery-status.dto';
-import { UpdateRiderLocationDto } from './dto/update-rider-location.dto';
 import * as bcrypt from 'bcrypt';
 import {
   stripDeliveriesSecrets,
@@ -45,13 +44,6 @@ const NEXT_STATUS: Partial<Record<DeliveryStatus, DeliveryStatus>> = {
 // A partner can give up on a delivery from any in-progress stage. The order's
 // status is left as-is so an admin can cancel, refund or re-dispatch it.
 const FAILABLE_FROM: DeliveryStatus[] = [
-  DeliveryStatus.EN_ROUTE_TO_PICKUP,
-  DeliveryStatus.PICKED_UP,
-  DeliveryStatus.EN_ROUTE_TO_CUSTOMER,
-];
-
-// Stages during which the rider reports where they are.
-const LOCATION_SHARING_STATUSES: DeliveryStatus[] = [
   DeliveryStatus.EN_ROUTE_TO_PICKUP,
   DeliveryStatus.PICKED_UP,
   DeliveryStatus.EN_ROUTE_TO_CUSTOMER,
@@ -757,54 +749,6 @@ export class LogisticsService {
         'You are not assigned to this delivery',
       );
     }
-  }
-
-  /**
-   * Stores the rider's current position so the customer's tracking map can
-   * show it. Only the person handling the delivery can report it, and only
-   * while the delivery is in progress.
-   */
-  async updateRiderLocation(
-    deliveryId: string,
-    dto: UpdateRiderLocationDto,
-    userId: string,
-    role?: string,
-  ) {
-    const delivery =
-      await this.prisma.delivery.findUnique({
-        where: { id: deliveryId },
-        include: { order: { select: { type: true } } },
-      });
-
-    if (!delivery) {
-      throw new NotFoundException('Delivery not found');
-    }
-
-    await this.assertHandledBy(delivery, userId, role);
-
-    const riderLocationAt = new Date();
-
-    // Checked in the same write, so a delivery that has just finished
-    // can't have its location changed afterwards.
-    const saved = await this.prisma.delivery.updateMany({
-      where: {
-        id: deliveryId,
-        status: { in: LOCATION_SHARING_STATUSES },
-      },
-      data: {
-        riderLat: dto.lat,
-        riderLng: dto.lng,
-        riderLocationAt,
-      },
-    });
-
-    if (saved.count === 0) {
-      throw new BadRequestException(
-        'Location can only be shared while the delivery is in progress',
-      );
-    }
-
-    return { riderLat: dto.lat, riderLng: dto.lng, riderLocationAt };
   }
 
   /**

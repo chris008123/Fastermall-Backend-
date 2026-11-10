@@ -209,6 +209,8 @@ A job that is `ASSIGNED` and already has this partner can now be started: send `
 
 ### Share rider location
 
+> **Removed (Nov 2026)**: see "Live maps and location removed" at the end of this file. The route now returns 410.
+
 The customer's tracking map shows the rider's last reported position.
 
 - Send `PATCH /logistics/deliveries/:id/location` with `{ lat, lng }` about every 10 seconds while the job is `EN_ROUTE_TO_PICKUP`, `PICKED_UP` or `EN_ROUTE_TO_CUSTOMER`.
@@ -232,7 +234,7 @@ A Marketplace order's status follows along, ending at `DELIVERED`. A Laundry ord
 
 ### New fields on delivery objects
 
-Delivery responses now also carry `claimedByStaffId`, `riderLat`, `riderLng` and `riderLocationAt`. Existing fields, including `order.type`, are unchanged.
+Delivery responses now also carry `claimedByStaffId`. (`riderLat`, `riderLng` and `riderLocationAt` were removed again in Nov 2026.) Existing fields, including `order.type`, are unchanged.
 
 ## New errors to handle
 
@@ -304,3 +306,25 @@ Admin console:
 - Refunding an old cash payment still marks it refunded without Paystack.
 
 Ship order: the backend can go out first. Older app versions that still offer cash get the 400 above when a customer picks it.
+
+## Live maps and location removed (2.6)
+
+Live maps and rider tracking are out of this release. They may come back later; the data columns are kept for that.
+
+Customer app:
+
+- Remove the live-tracking map screen and any map on order or delivery screens. Show the delivery **status** and its timeline instead (`statusEvents` on delivery objects, plus push notifications).
+- Delivery objects (on `GET /orders`, `GET /orders/:id` and the order returned by `POST /orders`) no longer have `riderLat`, `riderLng`, `riderLocationAt`, `pickupLat`, `pickupLng`, `dropoffLat` or `dropoffLng`. Nothing else changed: `status`, `code`, `deliveryCodeUsed`, `distanceKm` and the rest are as before.
+- Saved addresses still accept and return optional `lat` / `lng`. No map is needed to use them, and they can be left out.
+
+Partner app:
+
+- Stop sending `PATCH /logistics/deliveries/:id/location` and remove the location permission prompt. The route now returns **410**: "Location sharing has been removed. Update the app to the latest version." Older versions that still call it should stop retrying on 410.
+- Delivery objects from `/logistics/...` routes no longer carry any coordinates or rider position.
+
+Admin console:
+
+- `GET /admin/orders/:id`, `/admin/deliveries` and the other admin views no longer include delivery coordinates.
+
+Ship order: the backend can go out first. Older apps that read the removed fields just see them missing, which the tracking screen already handled as "no position yet".
+
