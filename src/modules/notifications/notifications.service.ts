@@ -5,6 +5,9 @@ import { Expo } from 'expo-server-sdk';
 import { PrismaService } from '../../database/prisma.service';
 import { PushService } from './push.service';
 import { RegisterDeviceDto } from './dto/register-device.dto';
+import { NotificationsQueryDto } from './dto/notifications-query.dto';
+import { afterCursor, toPage } from '../../shared/pagination/cursor';
+import { resolvePreferences } from '../logistics/preferences.service';
 
 export interface NotificationUser {
   userId: string;
@@ -116,17 +119,6 @@ export class NotificationsService {
     });
   }
 
-  @OnEvent('support.reply.created')
-  async onSupportReply(event: { ticketId: string; userId: string; subject: string }) {
-    await this.notifyCustomer(event.userId, {
-      title: 'Support replied',
-      body: `We replied to your ticket "${event.subject.slice(0, 60)}".`,
-      type: 'SUPPORT_REPLY',
-      data: { ticketId: event.ticketId },
-      channelId: CHANNELS.orders,
-    });
-  }
-
   @OnEvent('laundry.created')
   async onLaundryCreated(order: { customerId: string; id: string }) {
     await this.notifyCustomer(order.customerId, {
@@ -206,9 +198,10 @@ export class NotificationsService {
     });
     if (delivery?.order?.type !== 'FOOD') return;
 
+    // Only partners who are online AND whose account is still active.
     const partners = await this.prisma.deliveryPartnerProfile.findMany({
-      where: { isAvailable: true },
-      select: { staffUserId: true },
+      where: { isAvailable: true, staffUser: { isActive: true } },
+      select: { staffUserId: true, preferences: true },
     });
     if (partners.length === 0) return;
 
@@ -216,11 +209,18 @@ export class NotificationsService {
       title: 'New delivery available',
       body: 'A new delivery is waiting to be claimed.',
       type: 'DELIVERY_AVAILABLE',
-      data: { deliveryId: event.deliveryId, orderId: event.orderId, laundryOrderId: event.laundryOrderId },
+      // jobId is the same id as deliveryId; the partner app opens the job with it.
+      data: {
+        deliveryId: event.deliveryId,
+        jobId: event.deliveryId,
+        orderId: event.orderId,
+        laundryOrderId: event.laundryOrderId,
+      },
       channelId: CHANNELS.deliveries,
     };
     const staffUserIds = partners.map((p) => p.staffUserId);
 
+    // Everyone gets the in-app notification...
     await this.safely(() =>
       this.prisma.notification.createMany({
         data: staffUserIds.map((staffUserId) => ({
@@ -232,40 +232,117 @@ export class NotificationsService {
         })),
       }),
     );
-    void this.push.sendToOwners(
-      { staffUserIds },
-      { title: input.title, body: input.body, channelId: input.channelId, data: { type: input.type, ...cleanData(input.data) } },
-    );
+
+    // ...but the push respects each partner's own settings.
+    const loud: string[] = [];
+    const quiet: string[] = [];
+    for (const p of partners) {
+      const { notifications } = resolvePreferences(p.preferences);
+      if (notifications.newJobs === false) continue;
+      (notifications.sound === false ? quiet : loud).push(p.staffUserId);
+    }
+    const payload = {
+      title: input.title,
+      body: input.body,
+      channelId: input.channelId,
+      data: { type: input.type, ...cleanData(input.data) },
+    };
+    if (loud.length) void this.push.sendToOwners({ staffUserIds: loud }, payload);
+    if (quiet.length) void this.push.sendToOwners({ staffUserIds: quiet }, { ...payload, sound: false });
+  }
+
+  // Emitted when an admin approves or rejects a partner's document.
+  @OnEvent('partner.document.reviewed')
+  async onPartnerDocumentReviewed(event: {
+    staffUserId: string;
+    documentId: string;
+    documentLabel: string;
+    status: 'APPROVED' | 'REJECTED';
+    reason?: string;
+  }) {
+    const approved = event.status === 'APPROVED';
+    await this.notifyStaff(event.staffUserId, {
+      title: approved ? 'Document approved' : 'Document rejected',
+      body: approved
+        ? `Your ${event.documentLabel.toLowerCase()} was approved.`
+        : `Your ${event.documentLabel.toLowerCase()} was rejected: ${event.reason ?? 'please upload a clearer copy'}`,
+      type: 'DOCUMENT_REVIEWED',
+      data: { documentId: event.documentId, status: event.status },
+      channelId: CHANNELS.deliveries,
+    });
+  }
+
+  // Emitted by Support when an admin answers a ticket. The ticket belongs to
+  // a customer (userId) or a staff member such as a partner (staffUserId).
+  @OnEvent('support.reply.created')
+  async onSupportReply(event: { ticketId: string; userId?: string; staffUserId?: string; subject: string }) {
+    const input: NotifyInput = {
+      title: 'Support replied',
+      body: `We replied to your ticket "${event.subject.slice(0, 60)}".`,
+      type: 'SUPPORT_REPLY',
+      data: { ticketId: event.ticketId },
+      channelId: CHANNELS.orders,
+    };
+    if (event.staffUserId) await this.notifyStaff(event.staffUserId, input);
+    else if (event.userId) await this.notifyCustomer(event.userId, input);
   }
 
   // ───────── Reading ─────────
 
-  // The latest notifications only; older ones stay in the database.
-  findMine(user: NotificationUser) {
-    return this.prisma.notification.findMany({
-      where: this.ownerWhere(user),
-      orderBy: { createdAt: 'desc' },
-      take: NOTIFICATION_LIST_LIMIT,
+  // No paging options: the latest 50, newest first, as before (older ones
+  // stay in the database). With `limit`/`cursor`: a page, { items,
+  // nextCursor }, newest first.
+  async findMine(user: NotificationUser, query: NotificationsQueryDto = {}) {
+    const paged = !!(query.limit || query.cursor);
+    const rows = await this.prisma.notification.findMany({
+      where: {
+        ...this.ownerWhere(user),
+        ...(query.unread ? { isRead: false } : {}),
+        ...(query.cursor ? afterCursor(query.cursor, 'desc') : {}),
+      },
+      take: paged ? (query.limit ?? 20) + 1 : NOTIFICATION_LIST_LIMIT,
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
     });
+    return paged ? toPage(rows, query.limit ?? 20) : rows;
   }
 
+  async unreadCount(user: NotificationUser) {
+    const count = await this.prisma.notification.count({
+      where: { ...this.ownerWhere(user), isRead: false },
+    });
+    return { unread: count };
+  }
+
+  // Only the owner can change a notification. Someone else's id answers
+  // "not found", so ids can't be probed.
+  async setRead(id: string, user: NotificationUser, isRead: boolean) {
+    const result = await this.prisma.notification.updateMany({
+      where: { id, ...this.ownerWhere(user) },
+      data: { isRead },
+    });
+    if (result.count === 0) throw new NotFoundException('Notification not found');
+    return this.prisma.notification.findUnique({ where: { id } });
+  }
+
+  markRead(id: string, user: NotificationUser) {
+    return this.setRead(id, user, true);
+  }
+
+  // Answers { count } (customer app) and { updated } (partner app): the same number.
   async markAllRead(user: NotificationUser) {
     const result = await this.prisma.notification.updateMany({
       where: { ...this.ownerWhere(user), isRead: false },
       data: { isRead: true },
     });
-    return { count: result.count };
+    return { count: result.count, updated: result.count };
   }
 
-  // Only the owner can mark a notification read. Someone else's id answers
-  // "not found", so ids can't be probed.
-  async markRead(id: string, user: NotificationUser) {
-    const result = await this.prisma.notification.updateMany({
+  async remove(id: string, user: NotificationUser) {
+    const result = await this.prisma.notification.deleteMany({
       where: { id, ...this.ownerWhere(user) },
-      data: { isRead: true },
     });
     if (result.count === 0) throw new NotFoundException('Notification not found');
-    return this.prisma.notification.findUnique({ where: { id } });
+    return { removed: true };
   }
 
   // ───────── Devices (Expo push tokens) ─────────
@@ -390,6 +467,24 @@ export class NotificationsService {
     );
     void this.push.sendToOwners(
       { userIds: [userId] },
+      { title: input.title, body: input.body, channelId: input.channelId, data: { type: input.type, ...cleanData(input.data) } },
+    );
+  }
+
+  private async notifyStaff(staffUserId: string, input: NotifyInput) {
+    await this.safely(() =>
+      this.prisma.notification.create({
+        data: {
+          staffUserId,
+          title: input.title,
+          body: input.body,
+          type: input.type,
+          data: cleanData(input.data) as Prisma.InputJsonValue,
+        },
+      }),
+    );
+    void this.push.sendToOwners(
+      { staffUserIds: [staffUserId] },
       { title: input.title, body: input.body, channelId: input.channelId, data: { type: input.type, ...cleanData(input.data) } },
     );
   }

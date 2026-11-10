@@ -13,6 +13,8 @@ export interface PushPayload {
   // Which per-device switch to honour when it differs from the channel
   // (e.g. broadcasts use the default channel but respect "announcements").
   filterAs?: string;
+  // false = silent push (the partner turned notification sound off).
+  sound?: boolean;
 }
 
 export interface PushTargets {
@@ -92,7 +94,7 @@ export class PushService {
       }
       messages.push({
         to: token,
-        sound: 'default',
+        sound: payload.sound === false ? null : 'default',
         priority: 'high',
         title: payload.title,
         body: payload.body,

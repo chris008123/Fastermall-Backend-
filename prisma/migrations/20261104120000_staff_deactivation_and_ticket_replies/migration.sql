@@ -1,7 +1,9 @@
 -- Staff deactivation: existing accounts stay active.
 -- AlterTable
-ALTER TABLE "staff_users" ADD COLUMN     "isActive" BOOLEAN NOT NULL DEFAULT true,
-ADD COLUMN     "deactivatedAt" TIMESTAMP(3);
+-- IF NOT EXISTS: migration 20261031120000_add_staff_sessions (from the other
+-- branch) adds isActive too; whichever runs second skips it.
+ALTER TABLE "staff_users" ADD COLUMN IF NOT EXISTS "isActive" BOOLEAN NOT NULL DEFAULT true,
+ADD COLUMN IF NOT EXISTS "deactivatedAt" TIMESTAMP(3);
 
 -- Staff replies on support tickets.
 -- CreateTable

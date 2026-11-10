@@ -6,12 +6,17 @@ import {
   OrderStatus,
   OrderType,
   PaymentStatus,
+  PayoutStatus,
   Prisma,
   StaffRole,
 } from '@prisma/client';
 import { PrismaService } from '../../database/prisma.service';
 import { SAFE_DELIVERY_SELECT } from '../../shared/utils/delivery-secrets';
 import { AdminListQueryDto } from './dto/admin-list-query.dto';
+
+// A partner's own cash-outs (whole pesewas, amount + fee) as cedis.
+const cashOutTotal = (sum: { amountPesewas: number | null; feePesewas: number | null } | null | undefined) =>
+  new Prisma.Decimal((sum?.amountPesewas ?? 0) + (sum?.feePesewas ?? 0)).dividedBy(100);
 
 const DEFAULT_PAGE_SIZE = 20;
 const MAX_PAGE_SIZE = 100;
@@ -294,7 +299,7 @@ export class AdminService {
     });
 
     const profileIds = staff.map((s) => s.deliveryProfile?.id).filter((id): id is string => !!id);
-    const [active, completed, earnings, payouts] = profileIds.length
+    const [active, completed, earnings, payouts, cashOuts] = profileIds.length
       ? await Promise.all([
           this.prisma.delivery.groupBy({
             by: ['partnerId'],
@@ -304,6 +309,7 @@ export class AdminService {
                 in: [
                   DeliveryStatus.ASSIGNED,
                   DeliveryStatus.EN_ROUTE_TO_PICKUP,
+                  DeliveryStatus.PAY_VENDOR,
                   DeliveryStatus.PICKED_UP,
                   DeliveryStatus.EN_ROUTE_TO_CUSTOMER,
                 ],
@@ -326,16 +332,31 @@ export class AdminService {
             where: { partnerId: { in: profileIds } },
             _sum: { amount: true },
           }),
+          // Cash-outs the partner asked for in the app (pending or paid).
+          this.prisma.payoutRequest.groupBy({
+            by: ['partnerId'],
+            where: { partnerId: { in: profileIds }, status: { in: [PayoutStatus.PENDING, PayoutStatus.PAID] } },
+            _sum: { amountPesewas: true, feePesewas: true },
+          }),
         ])
-      : [[], [], [], []];
+      : [[], [], [], [], []];
 
     const countBy = (rows: { partnerId: string | null; _count: { _all: number } }[]) =>
       new Map(rows.map((r) => [r.partnerId, r._count._all]));
     const activeBy = countBy(active);
     const completedBy = countBy(completed);
     const earningsBy = new Map(earnings.map((r) => [r.partnerId, r._sum.amount]));
-    const payoutsBy = new Map(payouts.map((r) => [r.partnerId, r._sum.amount]));
     const dec = (v: Prisma.Decimal | null | undefined) => new Prisma.Decimal(v ?? 0);
+    const cashOutsBy = new Map(
+      cashOuts.map((r) => [r.partnerId, cashOutTotal(r._sum)]),
+    );
+    // Paid out = payouts recorded here + the partner's own cash-outs.
+    const payoutsBy = new Map(
+      profileIds.map((id) => [
+        id,
+        dec(payouts.find((r) => r.partnerId === id)?._sum.amount).plus(cashOutsBy.get(id) ?? 0),
+      ]),
+    );
 
     return staff.map(({ deliveryProfile, ...s }) => ({
       ...s,
@@ -387,11 +408,20 @@ export class AdminService {
     const amount = new Prisma.Decimal(dto.amount);
     return this.prisma.$transaction(
       async (tx) => {
-        const [earned, paid] = await Promise.all([
+        // Same lock as a partner cash-out (WalletService.cashOut), so the two
+        // can't spend the same balance at the same moment.
+        await tx.$queryRaw`SELECT id FROM delivery_partner_profiles WHERE id = ${profile.id} FOR UPDATE`;
+        const [earned, paid, cashOuts] = await Promise.all([
           tx.driverEarning.aggregate({ where: { partnerId: profile.id }, _sum: { amount: true } }),
           tx.partnerPayout.aggregate({ where: { partnerId: profile.id }, _sum: { amount: true } }),
+          tx.payoutRequest.aggregate({
+            where: { partnerId: profile.id, status: { in: [PayoutStatus.PENDING, PayoutStatus.PAID] } },
+            _sum: { amountPesewas: true, feePesewas: true },
+          }),
         ]);
-        const balance = new Prisma.Decimal(earned._sum.amount ?? 0).minus(paid._sum.amount ?? 0);
+        const balance = new Prisma.Decimal(earned._sum.amount ?? 0)
+          .minus(paid._sum.amount ?? 0)
+          .minus(cashOutTotal(cashOuts._sum));
         if (amount.greaterThan(balance)) {
           throw new BadRequestException(`That's more than this partner is owed (GHS ${balance.toFixed(2)})`);
         }

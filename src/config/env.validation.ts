@@ -30,6 +30,12 @@ export function validateEnv(env: NodeJS.ProcessEnv = process.env) {
   if ((env.PAYMENT_PROVIDER ?? 'paystack').toLowerCase() === 'paystack' && !env.PAYSTACK_SECRET_KEY) {
     logger.warn('PAYSTACK_SECRET_KEY is not set — online payments will fail until it is.');
   }
+  const bootstrap = env.ADMIN_BOOTSTRAP_SECRET;
+  if (bootstrap && (bootstrap.length < 24 || /replace-me/i.test(bootstrap))) {
+    logger.warn(
+      'ADMIN_BOOTSTRAP_SECRET is short or still the placeholder. Anyone who guesses it can create the first admin until one exists. Use 32+ random characters, or remove it once your admin is created.',
+    );
+  }
   if (isProd && !env.CORS_ORIGINS) {
     logger.warn('CORS_ORIGINS is not set — browser requests are accepted from any origin.');
   }

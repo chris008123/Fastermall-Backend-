@@ -24,6 +24,11 @@ model User {
   resetCodeHash  String?
   resetExpiresAt DateTime?
   resetAttempts  Int             @default(0)
+  // Per-account lockout after repeated wrong passwords or codes.
+  loginFailures  Int             @default(0)
+  loginLockedUntil DateTime?
+  codeFailures   Int             @default(0)
+  codeLockedUntil DateTime?
   laundryOrders  LaundryOrder[]
   notifications  Notification[]
   devices        Device[]
@@ -39,25 +44,71 @@ model User {
 }
 
 model StaffUser {
-  id                String                  @id @default(uuid())
-  email             String?                 @unique
-  phone             String?                 @unique
-  passwordHash      String
-  fullName          String
-  role              StaffRole
-  isVerified        Boolean                 @default(false)
+  id                  String                  @id @default(uuid())
+  email               String?                 @unique
+  phone               String?                 @unique
+  passwordHash        String
+  fullName            String
+  role                StaffRole
+  isVerified          Boolean                 @default(false)
   // Deactivated accounts can't sign in, and their existing tokens are refused.
-  isActive          Boolean                 @default(true)
-  deactivatedAt     DateTime?
-  createdAt         DateTime                @default(now())
-  updatedAt         DateTime                @updatedAt
-  deliveryProfile   DeliveryPartnerProfile?
-  notifications     Notification[]
-  devices           Device[]
-  claimedDeliveries Delivery[]
-  ticketReplies     SupportTicketReply[]
+  isActive            Boolean                 @default(true)
+  deactivatedAt       DateTime?
+  // Login lockout and self-service password reset (see StaffService).
+  failedLoginAttempts Int                     @default(0)
+  lockedUntil         DateTime?
+  resetCodeHash       String?
+  resetExpiresAt      DateTime?
+  resetAttempts       Int                     @default(0)
+  // Added by migration 20261017130000_account_lockout but never used: staff
+  // lockout uses failedLoginAttempts / lockedUntil above.
+  loginFailures       Int                     @default(0)
+  loginLockedUntil    DateTime?
+  createdAt           DateTime                @default(now())
+  updatedAt           DateTime                @updatedAt
+  sessions            StaffSession[]
+  deliveryProfile     DeliveryPartnerProfile?
+  notifications       Notification[]
+  devices             Device[]
+  claimedDeliveries   Delivery[]
+  ticketReplies       SupportTicketReply[]
+  supportTickets      SupportTicket[]
+  ownedVendors        FoodVendor[]            @relation("VendorOwner")
 
   @@map("staff_users")
+}
+
+// Remembers the result of an action sent with an Idempotency-Key header, so a
+// retry (after a timeout, say) gets the first result back instead of running
+// the action twice. Rows older than 24 hours are ignored and cleaned up.
+model IdempotencyKey {
+  id          String    @id @default(uuid())
+  staffUserId String
+  key         String
+  fingerprint String
+  response    Json?
+  completedAt DateTime?
+  createdAt   DateTime  @default(now())
+
+  @@unique([staffUserId, key])
+  @@index([createdAt])
+  @@map("idempotency_keys")
+}
+
+// One row per signed-in device. The access token carries this id (`sid`), so
+// logging out or disabling the account ends the session straight away.
+model StaffSession {
+  id               String    @id @default(uuid())
+  staffUserId      String
+  refreshTokenHash String    @unique
+  expiresAt        DateTime
+  revokedAt        DateTime?
+  createdAt        DateTime  @default(now())
+  lastUsedAt       DateTime?
+  staffUser        StaffUser @relation(fields: [staffUserId], references: [id], onDelete: Cascade)
+
+  @@index([staffUserId])
+  @@map("staff_sessions")
 }
 
 model DeliveryPartnerProfile {
@@ -67,8 +118,21 @@ model DeliveryPartnerProfile {
   isAvailable  Boolean             @default(false)
   currentLat   Float?
   currentLng   Float?
+  // Only the latest position is kept (no trail), and it is cleared when the
+  // partner goes offline. See PresenceService.
+  locationAt        DateTime?
+  locationAccuracyM Float?
+  lastSeenAt        DateTime?
   vehiclePlate String?
+  // Where cash-outs are sent (mobile money). Only the masked number is ever
+  // returned by the API.
+  payoutNetwork String?
+  payoutNumber  String?
+  // Saved app settings (notifications, delivery, navigation). See PreferencesService.
+  preferences   Json?
+  documents     PartnerDocument[]
   createdAt    DateTime            @default(now())
+  payoutRequests PayoutRequest[]
   deliveries   Delivery[]
   staffUser    StaffUser           @relation(fields: [staffUserId], references: [id])
   earnings     DriverEarning[]
@@ -146,8 +210,12 @@ model FoodVendor {
   rating          Float      @default(0)
   reviewCount     Int        @default(0)
   isOpen          Boolean    @default(true)
+  // The VENDOR staff account that runs this vendor's menu.
+  ownerStaffId    String?
+  owner           StaffUser? @relation("VendorOwner", fields: [ownerStaffId], references: [id], onDelete: SetNull)
   menuItems       MenuItem[]
 
+  @@index([ownerStaffId])
   @@map("food_vendors")
 }
 
@@ -300,6 +368,8 @@ model Delivery {
   riderLng                Float?
   riderLocationAt         DateTime?
 
+  supportTickets          SupportTicket[]
+
   @@index([claimedByStaffId])
   @@map("deliveries")
 }
@@ -314,6 +384,75 @@ model DeliveryStatusEvent {
 
   @@index([deliveryId, createdAt])
   @@map("delivery_status_events")
+}
+
+enum DocumentType {
+  ID_CARD
+  PROFILE_PHOTO
+  DRIVERS_LICENSE
+  VEHICLE_REGISTRATION
+  INSURANCE
+}
+
+enum DocumentStatus {
+  UPLOADING
+  PENDING
+  APPROVED
+  REJECTED
+  SUPERSEDED
+}
+
+// A verification document a partner uploaded (ID, licence...). The file lives
+// in private storage; only its path is stored here, and the path is never sent
+// to the partner app.
+model PartnerDocument {
+  id              String                 @id @default(uuid())
+  partnerId       String
+  type            DocumentType
+  status          DocumentStatus         @default(UPLOADING)
+  storagePath     String
+  contentType     String
+  sizeBytes       Int
+  expiresAt       DateTime?
+  rejectionReason String?
+  reviewedById    String?
+  reviewedAt      DateTime?
+  createdAt       DateTime               @default(now())
+  updatedAt       DateTime               @updatedAt
+  partner         DeliveryPartnerProfile @relation(fields: [partnerId], references: [id])
+
+  @@index([partnerId, type])
+  @@index([status, createdAt])
+  @@map("partner_documents")
+}
+
+enum PayoutStatus {
+  PENDING
+  PAID
+  FAILED
+}
+
+// A partner's request to cash out. Money is whole pesewas (1 GHS = 100), never
+// a floating-point number. PENDING and PAID count against the balance; FAILED
+// gives the money back.
+model PayoutRequest {
+  id                String                 @id @default(uuid())
+  partnerId         String
+  amountPesewas     Int
+  feePesewas        Int                    @default(0)
+  currency          String                 @default("GHS")
+  status            PayoutStatus           @default(PENDING)
+  network           String
+  destinationNumber String
+  destinationMasked String
+  failureReason     String?
+  createdAt         DateTime               @default(now())
+  updatedAt         DateTime               @updatedAt
+  partner           DeliveryPartnerProfile @relation(fields: [partnerId], references: [id])
+
+  @@index([partnerId, createdAt])
+  @@index([status, createdAt])
+  @@map("payout_requests")
 }
 
 model DriverEarning {
@@ -431,29 +570,44 @@ model Device {
   @@map("devices")
 }
 
+// A support request from a customer (userId) or a staff member such as a
+// delivery partner (staffUserId), optionally about one delivery.
 model SupportTicket {
-  id         String       @id @default(uuid())
-  userId     String
-  subject    String
-  message    String
-  status     TicketStatus @default(OPEN)
-  createdAt  DateTime     @default(now())
-  updatedAt  DateTime     @updatedAt
-  user       User         @relation(fields: [userId], references: [id])
+  id          String               @id @default(uuid())
+  // Exactly one of userId (a customer) or staffUserId (e.g. a partner).
+  userId      String?
+  staffUserId String?
+  // Optional: the delivery this ticket is about (must be the owner's own).
+  deliveryId  String?
+  subject     String
+  message     String
+  status      TicketStatus         @default(OPEN)
+  createdAt   DateTime             @default(now())
+  updatedAt   DateTime             @updatedAt
+  user        User?                @relation(fields: [userId], references: [id], onDelete: Restrict)
+  staffUser   StaffUser?           @relation(fields: [staffUserId], references: [id])
+  delivery    Delivery?            @relation(fields: [deliveryId], references: [id], onDelete: SetNull)
   // Optional: what a "Report a problem" ticket is about.
-  targetType String?
-  targetId   String?
-  reason     String?
-  replies    SupportTicketReply[]
+  targetType  String?
+  targetId    String?
+  reason      String?
+  replies     SupportTicketReply[]
 
+  @@index([userId, createdAt])
+  @@index([staffUserId, createdAt])
+  @@index([status, createdAt])
   @@map("support_tickets")
 }
 
-// A staff answer on a support ticket. The customer is notified of each one.
+// A message on a ticket after the first one (which stays on the ticket
+// itself). Written by support (fromAdmin, staffUserId = the admin) or by the
+// ticket's owner (fromAdmin false, authorId = the customer or staff member).
 model SupportTicketReply {
   id          String        @id @default(uuid())
   ticketId    String
   staffUserId String?
+  fromAdmin   Boolean       @default(true)
+  authorId    String?
   message     String
   createdAt   DateTime      @default(now())
   ticket      SupportTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
@@ -509,6 +663,7 @@ enum LaundryStatus {
 enum DeliveryStatus {
   ASSIGNED
   EN_ROUTE_TO_PICKUP
+  PAY_VENDOR
   PICKED_UP
   EN_ROUTE_TO_CUSTOMER
   DELIVERED

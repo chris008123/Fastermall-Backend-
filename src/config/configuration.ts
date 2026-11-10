@@ -1,8 +1,34 @@
 export default () => ({
   port: parseInt(process.env.PORT || '3000', 10),
+  documents: {
+    bucket: process.env.DOCUMENTS_BUCKET || 'partner-documents',
+    maxBytes: parseInt(process.env.DOCUMENT_MAX_BYTES || String(5 * 1024 * 1024), 10),
+    // OFF by default: when on, a partner needs every required document
+    // approved before they can accept a job.
+    requireVerification: process.env.PARTNER_REQUIRE_VERIFICATION === 'true',
+  },
+  presence: {
+    // OFF by default. Turn on (PARTNER_AUTO_OFFLINE=true) only once the app
+    // sends location or heartbeat updates, or partners are taken offline
+    // after the timeout even though they are still working.
+    autoOffline: process.env.PARTNER_AUTO_OFFLINE === 'true',
+    offlineAfterSeconds: parseInt(process.env.PARTNER_OFFLINE_AFTER_SECONDS || '180', 10),
+    updateEverySeconds: 60,
+  },
+  wallet: {
+    currency: 'GHS',
+    minCashOutPesewas: parseInt(process.env.CASH_OUT_MIN_PESEWAS || '1000', 10),
+    cashOutFeePesewas: parseInt(process.env.CASH_OUT_FEE_PESEWAS || '0', 10),
+  },
   jwt: {
     secret: process.env.JWT_SECRET,
     expiresIn: process.env.JWT_EXPIRES_IN || '7d',
+    // Staff get an access token plus a one-time refresh token. Every staff
+    // request checks the session (JwtStrategy), so logout or deactivation
+    // takes effect at once whatever the lifetime. 12h keeps the admin
+    // console, which doesn't refresh, signed in for a working day.
+    staffAccessExpiresIn: process.env.STAFF_ACCESS_TOKEN_EXPIRES_IN || '12h',
+    staffRefreshDays: parseInt(process.env.STAFF_REFRESH_TOKEN_DAYS || '30', 10),
   },
   supabase: {
     url: process.env.SUPABASE_URL,

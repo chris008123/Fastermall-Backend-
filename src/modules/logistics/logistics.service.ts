@@ -19,32 +19,45 @@ import { PrismaService } from '../../database/prisma.service';
 import { SettingsService } from '../settings/settings.service';
 import { UpdatePartnerStatusDto } from './dto/update-partner-status.dto';
 import { UpdateDeliveryStatusDto } from './dto/update-delivery-status.dto';
+import { DeliveryListQueryDto } from './dto/delivery-list-query.dto';
+import { CLEARED_LOCATION } from './presence.service';
 import * as bcrypt from 'bcrypt';
-import {
-  stripDeliveriesSecrets,
-  stripDeliverySecrets,
-} from '../../shared/utils/delivery-secrets';
+import { maskNumber } from '../../shared/mask';
+import { afterCursor, toPage } from '../../shared/pagination/cursor';
+import { stripDeliverySecrets } from '../../shared/utils/delivery-secrets';
+
 // Short-distance deliveries go to walking partners, longer ones need a motorcycle.
 // Distance isn't tracked yet at the order level because GPS/maps are not part of
 // the current MVP.
 const WALKING_MAX_DISTANCE_KM = 2;
 
-// The only forward moves a partner can make with PATCH /deliveries/:id/status.
-// DELIVERED only comes from verify-code, so it never appears as a target here.
-// ASSIGNED -> EN_ROUTE_TO_PICKUP is for a delivery an admin assigned to the
-// partner; unclaimed deliveries have no partnerId, so the ownership check in
-// updateStatus sends them through claim instead. Anything not listed (skipping
-// a step, going backwards, touching a DELIVERED or FAILED job) is rejected.
-const NEXT_STATUS: Partial<Record<DeliveryStatus, DeliveryStatus>> = {
-  [DeliveryStatus.ASSIGNED]: DeliveryStatus.EN_ROUTE_TO_PICKUP,
-  [DeliveryStatus.EN_ROUTE_TO_PICKUP]: DeliveryStatus.PICKED_UP,
-  [DeliveryStatus.PICKED_UP]: DeliveryStatus.EN_ROUTE_TO_CUSTOMER,
+// Wrong handover-code guesses allowed before the job locks for a few minutes.
+const MAX_CODE_ATTEMPTS = 5;
+const CODE_LOCK_MS = 5 * 60 * 1000;
+
+// Where a delivery may go next with PATCH /deliveries/:id/status.
+// - ASSIGNED -> EN_ROUTE_TO_PICKUP is for a delivery an admin assigned to the
+//   partner; unclaimed deliveries have no partnerId, so the ownership check
+//   sends them through claim instead.
+// - PAY_VENDOR (paying the restaurant or shop) is optional: a partner may go
+//   straight from heading to the vendor to picked up, which keeps older app
+//   versions working.
+// - DELIVERED is not here on purpose: food deliveries only reach it by
+//   verifying the customer's handover code (admin-run ones: see updateStatus).
+// Anything not listed (skipping a step, going backwards, touching a DELIVERED
+// or FAILED job) is rejected.
+const NEXT_STATUS: Partial<Record<DeliveryStatus, DeliveryStatus[]>> = {
+  [DeliveryStatus.ASSIGNED]: [DeliveryStatus.EN_ROUTE_TO_PICKUP],
+  [DeliveryStatus.EN_ROUTE_TO_PICKUP]: [DeliveryStatus.PAY_VENDOR, DeliveryStatus.PICKED_UP],
+  [DeliveryStatus.PAY_VENDOR]: [DeliveryStatus.PICKED_UP],
+  [DeliveryStatus.PICKED_UP]: [DeliveryStatus.EN_ROUTE_TO_CUSTOMER],
 };
 
 // A partner can give up on a delivery from any in-progress stage. The order's
 // status is left as-is so an admin can cancel, refund or re-dispatch it.
 const FAILABLE_FROM: DeliveryStatus[] = [
   DeliveryStatus.EN_ROUTE_TO_PICKUP,
+  DeliveryStatus.PAY_VENDOR,
   DeliveryStatus.PICKED_UP,
   DeliveryStatus.EN_ROUTE_TO_CUSTOMER,
 ];
@@ -54,6 +67,7 @@ const FAILABLE_FROM: DeliveryStatus[] = [
 const UNFINISHED_STATUSES: DeliveryStatus[] = [
   DeliveryStatus.ASSIGNED,
   DeliveryStatus.EN_ROUTE_TO_PICKUP,
+  DeliveryStatus.PAY_VENDOR,
   DeliveryStatus.PICKED_UP,
   DeliveryStatus.EN_ROUTE_TO_CUSTOMER,
 ];
@@ -81,6 +95,11 @@ function maxActiveFoodDeliveries(): number {
     : DEFAULT_MAX_ACTIVE_FOOD_DELIVERIES;
 }
 
+const JOB_ALREADY_TAKEN = {
+  message: 'This delivery has already been taken',
+  code: 'JOB_ALREADY_TAKEN',
+};
+
 const DELIVERY_DETAIL_INCLUDE = {
   order: {
     include: {
@@ -99,6 +118,9 @@ const DELIVERY_DETAIL_INCLUDE = {
     },
   },
   laundryOrder: true,
+  statusEvents: {
+    orderBy: { createdAt: 'asc' },
+  },
 } satisfies Prisma.DeliveryInclude;
 
 @Injectable()
@@ -108,6 +130,96 @@ export class LogisticsService {
     private readonly events: EventEmitter2,
     @Optional() private readonly settings?: SettingsService,
   ) {}
+
+  // The partner's own profile. The full payout number never leaves the server;
+  // only a masked copy is shown (the wallet endpoints manage the real one).
+  // Location fields are dropped too (live location was removed).
+  private publicProfile<T extends { payoutNetwork?: string | null; payoutNumber?: string | null }>(
+    profile: T,
+  ) {
+    const { payoutNetwork, payoutNumber, ...rest } = profile as T & Record<string, unknown>;
+    for (const key of Object.keys(CLEARED_LOCATION)) delete (rest as Record<string, unknown>)[key];
+    return {
+      ...rest,
+      payoutDestination:
+        payoutNetwork && payoutNumber
+          ? { network: payoutNetwork, numberMasked: maskNumber(payoutNumber) }
+          : null,
+    };
+  }
+
+  // A delivery as the apps see it: no handover-code secrets, no location
+  // (see stripDeliverySecrets), plus the timeline as [{ stage, at }], oldest
+  // first. `statusEvents` is left in place for older clients.
+  private withStageHistory<T extends { statusEvents?: { status: DeliveryStatus; createdAt: Date }[] }>(
+    delivery: T,
+  ) {
+    return {
+      ...stripDeliverySecrets(delivery),
+      stageHistory: (delivery.statusEvents ?? []).map((e) => ({
+        stage: e.status,
+        at: e.createdAt,
+      })),
+    };
+  }
+
+  /**
+   * One delivery, with its stage history. An admin can open any delivery (for
+   * support). A partner can open their own, or a food job that is still
+   * waiting to be taken (so tapping a "new delivery" push can open it).
+   * Anything else answers "not found", so ids cannot be probed.
+   */
+  async findOne(id: string, userId: string, role?: string) {
+    const delivery = await this.prisma.delivery.findUnique({
+      where: { id },
+      include: {
+        ...DELIVERY_DETAIL_INCLUDE,
+        partner: { select: { id: true, staffUserId: true } },
+      },
+    });
+    if (!delivery) throw new NotFoundException('Delivery not found');
+
+    if (role !== StaffRole.ADMIN) {
+      const mine = delivery.partner?.staffUserId === userId;
+      const open =
+        !delivery.partnerId &&
+        delivery.status === DeliveryStatus.ASSIGNED &&
+        delivery.order?.type === OrderType.FOOD;
+      if (!mine && !open) throw new NotFoundException('Delivery not found');
+    }
+
+    return this.withStageHistory(delivery);
+  }
+
+  /**
+   * The signed-in partner's own profile (used by the app on start-up and for
+   * the online switch).
+   */
+  async getMyProfile(userId: string) {
+    const profile =
+      await this.prisma.deliveryPartnerProfile.findUnique({
+        where: { staffUserId: userId },
+        include: {
+          staffUser: {
+            select: {
+              id: true,
+              fullName: true,
+              email: true,
+              phone: true,
+              role: true,
+            },
+          },
+        },
+      });
+
+    if (!profile) {
+      throw new NotFoundException(
+        'You are not registered as a delivery partner',
+      );
+    }
+
+    return this.publicProfile(profile);
+  }
 
   // Tells Notifications that a delivery moved forward, so the customer can be
   // pushed. Called after the database transaction has committed.
@@ -194,10 +306,11 @@ export class LogisticsService {
   /**
    * Returns deliveries that have not yet been claimed.
    *
-   * Delivery partners only ever see FOOD deliveries. Marketplace and
-   * laundry deliveries are visible to admins only.
+   * Delivery partners only ever see FOOD deliveries. Admins see every
+   * unclaimed delivery, including the marketplace and laundry ones they run.
+   * Without paging options the answer is the plain array older apps expect.
    */
-  async findUnassigned(role?: string) {
+  async findUnassigned(role?: string, query: DeliveryListQueryDto = {}) {
     const rows = await this.prisma.delivery.findMany({
       where: {
         partnerId: null,
@@ -206,7 +319,9 @@ export class LogisticsService {
         ...(role === StaffRole.ADMIN
           ? {}
           : { order: { type: OrderType.FOOD } }),
+        ...(query.cursor ? afterCursor(query.cursor, 'asc') : {}),
       },
+      ...(query.limit ? { take: query.limit + 1 } : {}),
       include: {
         order: {
           include: {
@@ -226,19 +341,17 @@ export class LogisticsService {
         },
         laundryOrder: true,
       },
-      orderBy: {
-        createdAt: 'asc',
-      },
+      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
     });
-    return stripDeliveriesSecrets(rows);
+
+    const safe = rows.map((d) => stripDeliverySecrets(d));
+    return query.limit || query.cursor ? toPage(safe, query.limit ?? 20) : safe;
   }
 
   /**
-   * Accepts a delivery.
-   *
-   * Food deliveries are claimed by delivery partners (at most a few at once).
-   * Marketplace and laundry deliveries are run by admins, who accept them the
-   * same way but have no partner profile, so the admin's own id is recorded.
+   * A delivery partner claims a food delivery, or an admin a marketplace or
+   * laundry one. Two people tapping Accept at the same moment: exactly one
+   * wins, the other gets 409 JOB_ALREADY_TAKEN.
    */
   async claim(
     deliveryId: string,
@@ -286,16 +399,12 @@ export class LogisticsService {
     }
 
     // 409 so the app can tell "someone else got it" apart from other errors.
-    if (delivery.partnerId || delivery.claimedByStaffId) {
-      throw new ConflictException(
-        'This delivery has already been claimed',
-      );
-    }
-
-    if (delivery.status !== DeliveryStatus.ASSIGNED) {
-      throw new ConflictException(
-        'This delivery is no longer available',
-      );
+    if (
+      delivery.partnerId ||
+      delivery.claimedByStaffId ||
+      delivery.status !== DeliveryStatus.ASSIGNED
+    ) {
+      throw new ConflictException(JOB_ALREADY_TAKEN);
     }
 
     const claimed = await this.prisma.$transaction(
@@ -350,9 +459,7 @@ export class LogisticsService {
         });
 
         if (taken.count !== 1) {
-          throw new ConflictException(
-            'This delivery has already been claimed',
-          );
+          throw new ConflictException(JOB_ALREADY_TAKEN);
         }
 
         if (delivery.orderId) {
@@ -385,7 +492,7 @@ export class LogisticsService {
       claimed.order?.customer?.id ?? claimed.laundryOrder?.customerId,
     );
 
-    return stripDeliverySecrets(claimed);
+    return this.withStageHistory(claimed);
   }
 
   async verifyDeliveryCode(
@@ -424,7 +531,7 @@ export class LogisticsService {
     }
 
     if (delivery.partnerId !== profile.id) {
-      throw new BadRequestException(
+      throw new ForbiddenException(
         'You are not assigned to this delivery',
       );
     }
@@ -435,12 +542,14 @@ export class LogisticsService {
       );
     }
 
+    // The code is only checked at the customer, after pickup. This stops a
+    // partner marking a job delivered straight after accepting it.
     if (
-      delivery.deliveryCodeLockedUntil &&
-      delivery.deliveryCodeLockedUntil > new Date()
+      delivery.status !== DeliveryStatus.PICKED_UP &&
+      delivery.status !== DeliveryStatus.EN_ROUTE_TO_CUSTOMER
     ) {
       throw new BadRequestException(
-        'Delivery code verification is temporarily locked',
+        `Cannot verify the code while the delivery is ${delivery.status}`,
       );
     }
 
@@ -450,50 +559,105 @@ export class LogisticsService {
       );
     }
 
+    const now = new Date();
+
+    if (
+      delivery.deliveryCodeLockedUntil &&
+      delivery.deliveryCodeLockedUntil > now
+    ) {
+      throw new BadRequestException(
+        'Delivery code verification is temporarily locked',
+      );
+    }
+
+    // A lock that has run out starts a fresh set of attempts.
+    if (delivery.deliveryCodeLockedUntil) {
+      await this.prisma.delivery.updateMany({
+        where: {
+          id: deliveryId,
+          deliveryCodeLockedUntil: { lte: now },
+        },
+        data: {
+          deliveryCodeAttempts: 0,
+          deliveryCodeLockedUntil: null,
+        },
+      });
+    }
+
+    // Count the attempt BEFORE comparing, in one atomic step, so many
+    // guesses sent at once cannot all slip past the limit.
+    const { deliveryCodeAttempts: attempts } =
+      await this.prisma.delivery.update({
+        where: { id: deliveryId },
+        data: { deliveryCodeAttempts: { increment: 1 } },
+        select: { deliveryCodeAttempts: true },
+      });
+
+    if (attempts > MAX_CODE_ATTEMPTS) {
+      await this.prisma.delivery.update({
+        where: { id: deliveryId },
+        data: {
+          deliveryCodeLockedUntil: new Date(Date.now() + CODE_LOCK_MS),
+        },
+      });
+      throw new BadRequestException(
+        'Too many incorrect attempts. Try again in 5 minutes.',
+      );
+    }
+
     const valid = await bcrypt.compare(
       code,
       delivery.deliveryCodeHash,
     );
 
     if (!valid) {
-      const attempts =
-        delivery.deliveryCodeAttempts + 1;
-
-      await this.prisma.delivery.update({
-        where: {
-          id: deliveryId,
-        },
-        data: {
-          deliveryCodeAttempts: attempts,
-          deliveryCodeLockedUntil:
-            attempts >= 5
-              ? new Date(Date.now() + 5 * 60 * 1000)
-              : null,
-        },
-      });
-
-      throw new BadRequestException(
-        attempts >= 5
-          ? 'Too many incorrect attempts. Try again in 5 minutes.'
-          : 'Invalid delivery code',
-      );
+      if (attempts >= MAX_CODE_ATTEMPTS) {
+        await this.prisma.delivery.update({
+          where: { id: deliveryId },
+          data: {
+            deliveryCodeLockedUntil: new Date(Date.now() + CODE_LOCK_MS),
+          },
+        });
+        throw new BadRequestException(
+          'Too many incorrect attempts. Try again in 5 minutes.',
+        );
+      }
+      throw new BadRequestException('Invalid delivery code');
     }
 
     // Read before the transaction: an admin setting, default 15.
-    const earningAmount = this.settings ? await this.settings.get('partnerEarningPerDelivery') : 15;
+    const earningAmount = this.settings
+      ? await this.settings.get('partnerEarningPerDelivery')
+      : 15;
 
     const verified = await this.prisma.$transaction(
       async (tx) => {
+        // Only the first successful verification wins; a repeat or a
+        // parallel request matches nothing and gets a 409.
+        const done = await tx.delivery.updateMany({
+          where: {
+            id: deliveryId,
+            partnerId: profile.id,
+            deliveryCodeUsed: false,
+          },
+          data: {
+            status: DeliveryStatus.DELIVERED,
+            deliveryCodeUsed: true,
+            deliveryCodeAttempts: 0,
+            verifiedAt: new Date(),
+          },
+        });
+
+        if (done.count === 0) {
+          throw new ConflictException({
+            message: 'This delivery was already completed',
+            code: 'JOB_ALREADY_COMPLETED',
+          });
+        }
+
         const updated =
-          await tx.delivery.update({
-            where: {
-              id: deliveryId,
-            },
-            data: {
-              status: DeliveryStatus.DELIVERED,
-              deliveryCodeUsed: true,
-              verifiedAt: new Date(),
-            },
+          await tx.delivery.findUniqueOrThrow({
+            where: { id: deliveryId },
           });
 
         if (delivery.orderId) {
@@ -547,7 +711,8 @@ export class LogisticsService {
   }
 
   /**
-   * Updates the status of a delivery.
+   * Moves a delivery to its next stage, or to FAILED from any in-progress
+   * stage. Only the person who accepted it may move it.
    */
   async updateStatus(
     deliveryId: string,
@@ -584,20 +749,20 @@ export class LogisticsService {
 
     // Admin-run deliveries have no handover code for now, so the admin
     // finishes them here. Food deliveries finish only through verify-code.
-    const isAllowedFinish =
-      runByAdmin &&
-      delivery.status === DeliveryStatus.EN_ROUTE_TO_CUSTOMER &&
-      dto.status === DeliveryStatus.DELIVERED;
-    const isAllowedStep =
-      NEXT_STATUS[delivery.status] === dto.status || isAllowedFinish;
-    const isAllowedFailure =
-      dto.status === DeliveryStatus.FAILED &&
-      FAILABLE_FROM.includes(delivery.status);
+    const allowed: DeliveryStatus[] = [
+      ...(NEXT_STATUS[delivery.status] ?? []),
+      ...(runByAdmin && delivery.status === DeliveryStatus.EN_ROUTE_TO_CUSTOMER
+        ? [DeliveryStatus.DELIVERED]
+        : []),
+      ...(FAILABLE_FROM.includes(delivery.status) ? [DeliveryStatus.FAILED] : []),
+    ];
 
-    if (!isAllowedStep && !isAllowedFailure) {
-      throw new BadRequestException(
-        `Cannot change a delivery from ${delivery.status} to ${dto.status}`,
-      );
+    if (!allowed.includes(dto.status)) {
+      throw new BadRequestException({
+        message: `Cannot change a delivery from ${delivery.status} to ${dto.status}`,
+        code: 'INVALID_STAGE_TRANSITION',
+        allowed,
+      });
     }
 
     const orderStatusMap: Partial<
@@ -636,9 +801,10 @@ export class LogisticsService {
           });
 
           if (moved.count === 0) {
-            throw new BadRequestException(
-              'Delivery status has changed. Refresh and try again.',
-            );
+            throw new ConflictException({
+              message: 'Delivery status has changed. Refresh and try again.',
+              code: 'DELIVERY_STATE_CHANGED',
+            });
           }
 
           await tx.deliveryStatusEvent.create({
@@ -653,28 +819,7 @@ export class LogisticsService {
               where: {
                 id: deliveryId,
               },
-              include: {
-                order: {
-                  include: {
-                    customer: {
-                      select: {
-                        id: true,
-                        fullName: true,
-                      },
-                    },
-                    items: {
-                      include: {
-                        menuItem: true,
-                        product: true,
-                      },
-                    },
-                  },
-                },
-                laundryOrder: true,
-                statusEvents: {
-                  orderBy: { createdAt: 'asc' },
-                },
-              },
+              include: DELIVERY_DETAIL_INCLUDE,
             });
 
           if (
@@ -700,12 +845,12 @@ export class LogisticsService {
       result.order?.customer?.id ?? result.laundryOrder?.customerId,
     );
 
-    return stripDeliverySecrets(result);
+    return this.withStageHistory(result);
   }
 
   /**
    * Makes sure the caller is the person who accepted this delivery:
-   * the admin for marketplace/laundry, the partner for food.
+   * the admin for marketplace/laundry, the partner for food. 403 otherwise.
    */
   private async assertHandledBy(
     delivery: {
@@ -724,7 +869,7 @@ export class LogisticsService {
       }
 
       if (delivery.claimedByStaffId !== userId) {
-        throw new BadRequestException(
+        throw new ForbiddenException(
           'You are not assigned to this delivery',
         );
       }
@@ -745,14 +890,15 @@ export class LogisticsService {
     }
 
     if (delivery.partnerId !== profile.id) {
-      throw new BadRequestException(
+      throw new ForbiddenException(
         'You are not assigned to this delivery',
       );
     }
   }
 
   /**
-   * Updates whether the delivery partner is available.
+   * Updates whether the delivery partner is available. Going online counts
+   * as being seen right now; going offline clears any stored location.
    */
   async updatePartnerStatus(
     userId: string,
@@ -773,23 +919,33 @@ export class LogisticsService {
       );
     }
 
-    return this.prisma.deliveryPartnerProfile.update({
+    const updated = await this.prisma.deliveryPartnerProfile.update({
       where: {
         staffUserId: userId,
       },
-      data: dto,
+      data: {
+        // Only the online switch is handled here; other profile fields go
+        // through ProfileService, which checks them.
+        ...(dto.isAvailable !== undefined ? { isAvailable: dto.isAvailable } : {}),
+        ...(dto.isAvailable === true ? { lastSeenAt: new Date() } : {}),
+        ...(dto.isAvailable === false ? CLEARED_LOCATION : {}),
+      },
     });
+
+    return this.publicProfile(updated);
   }
 
   /**
    * Returns deliveries assigned to the current partner, or for an admin,
-   * the marketplace and laundry deliveries they accepted.
+   * the marketplace and laundry deliveries they accepted. Optional filters:
+   * status, updatedSince, and cursor paging (which switches the answer to
+   * { items, nextCursor }).
    */
-  async myDeliveries(userId: string, role?: string) {
-    let where: Prisma.DeliveryWhereInput;
+  async myDeliveries(userId: string, role?: string, query: DeliveryListQueryDto = {}) {
+    let owner: Prisma.DeliveryWhereInput;
 
     if (role === StaffRole.ADMIN) {
-      where = { claimedByStaffId: userId };
+      owner = { claimedByStaffId: userId };
     } else {
       const profile =
         await this.prisma.deliveryPartnerProfile.findUnique(
@@ -806,42 +962,31 @@ export class LogisticsService {
         );
       }
 
-      where = { partnerId: profile.id };
+      owner = { partnerId: profile.id };
     }
 
     const rows = await this.prisma.delivery.findMany({
-      where,
-      include: {
-        order: {
-          include: {
-            customer: {
-              select: {
-                id: true,
-                fullName: true,
-              },
-            },
-            items: {
-              include: {
-                menuItem: true,
-                product: true,
-              },
-            },
-          },
-        },
-        laundryOrder: true,
-        statusEvents: {
-          orderBy: { createdAt: 'asc' },
-        },
+      where: {
+        ...owner,
+        ...(query.status?.length ? { status: { in: query.status } } : {}),
+        ...(query.updatedSince
+          ? { updatedAt: { gt: new Date(query.updatedSince) } }
+          : {}),
+        ...(query.cursor ? afterCursor(query.cursor, 'desc') : {}),
       },
-      orderBy: {
-        createdAt: 'desc',
-      },
+      ...(query.limit ? { take: query.limit + 1 } : {}),
+      include: DELIVERY_DETAIL_INCLUDE,
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
     });
-    return stripDeliveriesSecrets(rows);
+
+    const shaped = rows.map((d) => this.withStageHistory(d));
+
+    // No paging asked for: the plain array the app already understands.
+    return query.limit || query.cursor ? toPage(shaped, query.limit ?? 20) : shaped;
   }
 
   /**
-   * Returns the partner's earnings.
+   * Returns the partner's earnings, in cedis and in pesewas.
    */
   async myEarnings(userId: string) {
     const profile =
@@ -877,7 +1022,15 @@ export class LogisticsService {
 
     return {
       total,
-      earnings,
+      totalPesewas: earnings.reduce(
+        (sum, earning) => sum + Math.round(Number(earning.amount) * 100),
+        0,
+      ),
+      currency: 'GHS',
+      earnings: earnings.map((earning) => ({
+        ...earning,
+        amountPesewas: Math.round(Number(earning.amount) * 100),
+      })),
     };
   }
 }
