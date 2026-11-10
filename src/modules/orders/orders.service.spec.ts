@@ -144,3 +144,24 @@ describe('OrdersService maintenance mode', () => {
     expect(prisma.order.create).not.toHaveBeenCalled();
   });
 });
+
+describe('OrdersService payment method (cash removed)', () => {
+  it.each(['CASH', 'cash', 'Cash on delivery', ' cash '])('refuses %p before saving anything', async (paymentMethod) => {
+    const { svc, prisma } = setup([item('m1', 'v1', 10)]);
+    await expect(svc.createOrder('u1', dto({ paymentMethod }))).rejects.toThrow(/no longer available/);
+    expect(prisma.order.create).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['mobile_money', 'MOBILE_MONEY'],
+    ['Mobile Money', 'MOBILE_MONEY'],
+    ['card', 'CARD'],
+    ['MoMo', 'MoMo'],
+    [undefined, undefined],
+    ['  ', undefined],
+  ])('stores %p as %p', async (paymentMethod, stored) => {
+    const { svc, created } = setup([item('m1', 'v1', 10)]);
+    await svc.createOrder('u1', dto({ paymentMethod }));
+    expect(created[0].paymentMethod).toBe(stored);
+  });
+});

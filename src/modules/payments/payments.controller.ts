@@ -45,7 +45,8 @@ export class PaymentsController {
     return this.paymentsService.findMyPayments(user.userId);
   }
 
-  // Admin: cash was handed over on delivery.
+  // Admin: cash was handed over on delivery. Deprecated: only for CASH
+  // payments chosen before cash was removed; no new ones are created.
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(StaffRole.ADMIN)
   @Patch(':id/cash-collected')

@@ -58,6 +58,8 @@ export class CreateOrderDto {
   @Min(0)
   deliveryFee?: number;
 
+  // A hint for the order screen (the real method is chosen at
+  // POST /payments/initialize). Any cash choice is refused by the service.
   @IsOptional()
   @IsString()
   paymentMethod?: string;

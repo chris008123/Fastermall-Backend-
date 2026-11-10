@@ -87,7 +87,7 @@ describe('SettingsController', () => {
   it('public settings hide the message unless maintenance is on, and never include partner pay', async () => {
     const { svc } = setup();
     const res = await new SettingsController(svc).publicSettings();
-    expect(res).toEqual({ marketplaceDeliveryFee: 7, laundryPickupFee: 5, maintenanceMode: false, maintenanceMessage: null });
+    expect(res).toEqual({ marketplaceDeliveryFee: 7, laundryPickupFee: 5, maintenanceMode: false, maintenanceMessage: null, acceptedPaymentMethods: ['MOBILE_MONEY', 'CARD'] });
   });
 
   it.each(['getAll', 'update'])('%s is ADMIN only', (name) => {

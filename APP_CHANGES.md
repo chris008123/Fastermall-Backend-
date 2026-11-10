@@ -282,3 +282,25 @@ Two partner items already work and can be used now:
 
 - **Mark all read:** `PATCH /notifications/read-all` also works with a staff token. It can replace the one-request-per-notification loop.
 - **Stage history:** each delivery from `GET /logistics/me/deliveries` and from the status route carries `statusEvents: [{ status, createdAt }]`, oldest first. The timeline can show when each step happened.
+
+---
+
+# November 2026 backend changes
+
+Tracked in `BACKEND_WORK_LOG.md`. Each part lists what the apps must change.
+
+## Cash payments removed (2.5)
+
+Customer app:
+
+- Remove the cash option from checkout. Offer the methods in `GET /settings` → `acceptedPaymentMethods` (currently `["MOBILE_MONEY", "CARD"]`).
+- `POST /payments/initialize` with `method: "CASH"` now returns 400: "Cash payment is no longer available. Please pay with mobile money or card."
+- `POST /orders` with any cash `paymentMethod` (`"CASH"`, `"cash on delivery"`, …) returns the same 400 and no order is created. `"mobile_money"` / `"card"` are stored as `MOBILE_MONEY` / `CARD`.
+- Orders placed with cash before the change can be paid online: call `POST /payments/initialize` with `MOBILE_MONEY` or `CARD` as usual.
+
+Admin console:
+
+- `PATCH /payments/:id/cash-collected` still works, for cash payments chosen before the change only. Hide the button for anything else.
+- Refunding an old cash payment still marks it refunded without Paystack.
+
+Ship order: the backend can go out first. Older app versions that still offer cash get the 400 above when a customer picks it.
