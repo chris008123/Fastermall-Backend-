@@ -56,4 +56,11 @@ export class CreateLaundryOrderDto {
   @IsOptional()
   @IsString()
   addressId?: string;
+
+  // The laundry vendor chosen in the app. Optional: the vendor is taken from
+  // the items; when sent it must match them.
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  vendorId?: string;
 }

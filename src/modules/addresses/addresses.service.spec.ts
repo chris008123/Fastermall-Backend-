@@ -119,7 +119,8 @@ describe('ordering with a saved address', () => {
 
   it('copies the address onto a laundry order', async () => {
     const prisma: any = {
-      laundryCatalogItem: { findMany: jest.fn().mockResolvedValue([{ id: 'c1', name: 'Shirt', unitPrice: 4 }]) },
+      laundryCatalogItem: { findMany: jest.fn().mockResolvedValue([{ id: 'c1', name: 'Shirt', unitPrice: 4, vendorId: 'fastermall-laundry' }]) },
+      laundryVendor: { findUnique: jest.fn().mockResolvedValue({ status: 'APPROVED', isOpen: true, name: 'Fastermall Laundry' }) },
       laundryOrder: { create: jest.fn(async ({ data }) => ({ id: 'l1', ...data })) },
     };
     const addresses = { getOwned: jest.fn().mockResolvedValue(address({ landmark: 'the gate' })) };

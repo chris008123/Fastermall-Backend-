@@ -40,6 +40,7 @@ model User {
   reviews        ProductReview[]
   addresses      Address[]
   preOrders      PreOrderRequest[]
+  laundryReviews LaundryVendorReview[]
 
   @@map("users")
 }
@@ -75,6 +76,10 @@ model StaffUser {
   ticketReplies       SupportTicketReply[]
   supportTickets      SupportTicket[]
   ownedVendors        FoodVendor[]            @relation("VendorOwner")
+  // LAUNDRY_STAFF: the laundry vendor they work for (null = Fastermall
+  // Laundry, the original in-house service).
+  laundryVendorId     String?
+  laundryVendor       LaundryVendor?          @relation(fields: [laundryVendorId], references: [id], onDelete: SetNull)
 
   @@map("staff_users")
 }
@@ -310,7 +315,11 @@ model LaundryCatalogItem {
   createdAt   DateTime      @default(now())
   updatedAt   DateTime      @updatedAt
   items       LaundryItem[]
+  // The laundry vendor offering this service at this price.
+  vendorId    String
+  vendor      LaundryVendor @relation(fields: [vendorId], references: [id])
 
+  @@index([vendorId])
   @@map("laundry_catalog_items")
 }
 
@@ -342,8 +351,12 @@ model LaundryOrder {
   // Hostel / room / landmark the rider collects the bag from.
   addressLabel   String?
   idempotencyKey String?
+  // The laundry vendor doing the washing. Fastermall runs the delivery.
+  vendorId       String?
+  vendor         LaundryVendor? @relation(fields: [vendorId], references: [id])
 
   @@unique([customerId, idempotencyKey])
+  @@index([vendorId, createdAt])
   @@map("laundry_orders")
 }
 
@@ -948,4 +961,57 @@ model PreOrderImage {
 
   @@index([requestId])
   @@map("pre_order_images")
+}
+
+enum LaundryVendorStatus {
+  PENDING
+  APPROVED
+  SUSPENDED
+}
+
+// An independent laundry business on Fastermall (requirement 2.15). Only
+// APPROVED vendors are shown to customers. "fastermall-laundry" is the
+// original in-house service; existing catalog and orders belong to it.
+model LaundryVendor {
+  id             String                @id @default(uuid())
+  name           String
+  description    String?
+  logoUrl        String?
+  location       String?
+  phone          String?
+  status         LaundryVendorStatus   @default(PENDING)
+  // Closed vendors are listed but can't take new orders.
+  isOpen         Boolean               @default(true)
+  // Average of reviews (1-5), null until the first review.
+  rating         Float?
+  reviewCount    Int                   @default(0)
+  // Fastermall's share, percent. Stored only: settlement rules are pending.
+  commissionRate Decimal?              @db.Decimal(5, 2)
+  createdAt      DateTime              @default(now())
+  updatedAt      DateTime              @updatedAt
+  catalogItems   LaundryCatalogItem[]
+  orders         LaundryOrder[]
+  staff          StaffUser[]
+  reviews        LaundryVendorReview[]
+
+  @@index([status, rating])
+  @@map("laundry_vendors")
+}
+
+// One review per customer per laundry vendor, after a completed order with
+// them. Writing again edits it.
+model LaundryVendorReview {
+  id        String        @id @default(uuid())
+  vendorId  String
+  userId    String
+  rating    Int
+  comment   String?
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+  vendor    LaundryVendor @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+  user      User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([vendorId, userId])
+  @@index([vendorId, createdAt])
+  @@map("laundry_vendor_reviews")
 }

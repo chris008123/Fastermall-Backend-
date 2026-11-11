@@ -27,12 +27,13 @@ describe('parseIdempotencyKey', () => {
 });
 
 describe('POST /laundry/orders', () => {
-  const catalog = [{ id: 'c1', name: 'Shirt', unitPrice: 4 }];
+  const catalog = [{ id: 'c1', name: 'Shirt', unitPrice: 4, vendorId: 'fastermall-laundry' }];
   const dto = { items: [{ catalogItemId: 'c1', quantity: 2 }], addressLabel: 'Unity Hall, Room 12' } as any;
 
   function setup() {
     const prisma: any = {
       laundryCatalogItem: { findMany: jest.fn().mockResolvedValue(catalog) },
+      laundryVendor: { findUnique: jest.fn().mockResolvedValue({ status: 'APPROVED', isOpen: true, name: 'Fastermall Laundry' }) },
       laundryOrder: {
         findUnique: jest.fn().mockResolvedValue(null),
         create: jest.fn(async ({ data }) => ({ id: 'l1', ...data })),

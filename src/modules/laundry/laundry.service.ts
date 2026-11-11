@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, Optional } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, NotFoundException, Optional } from '@nestjs/common';
 import { SettingsService } from '../settings/settings.service';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { PrismaService } from '../../database/prisma.service';
@@ -10,7 +10,11 @@ import {
   formatAddressLabel,
 } from '../addresses/addresses.service';
 
-// Flat per-item price for MVP — replace with a real pricing table per package later
+// The original in-house laundry. Existing catalog, orders and laundry staff
+// without a vendor belong to it (see the multivendor migration).
+export const DEFAULT_LAUNDRY_VENDOR_ID = 'fastermall-laundry';
+
+export type LaundryRequester = { userId: string; role?: string };
 
 
 @Injectable()
@@ -22,11 +26,24 @@ export class LaundryService {
     @Optional() private readonly settings?: SettingsService,
   ) {}
 
-  async getCatalog() {
+  /**
+   * One vendor's active services. Without a vendor id: Fastermall Laundry,
+   * which is what GET /laundry/catalog always returned (older apps).
+   */
+  async getCatalog(vendorId: string = DEFAULT_LAUNDRY_VENDOR_ID) {
     return this.prisma.laundryCatalogItem.findMany({
-      where: { isActive: true },
+      where: { isActive: true, vendorId },
       orderBy: { name: 'asc' },
     });
+  }
+
+  /** The vendor a laundry staff member works for (null vendor = Fastermall). */
+  async staffVendorId(staffUserId: string) {
+    const staff = await this.prisma.staffUser.findUnique({
+      where: { id: staffUserId },
+      select: { laundryVendorId: true },
+    });
+    return staff?.laundryVendorId ?? DEFAULT_LAUNDRY_VENDOR_ID;
   }
 
   async createOrder(
@@ -64,6 +81,35 @@ export class LaundryService {
       throw new NotFoundException(
         'One or more laundry catalog items were not found',
       );
+    }
+
+    // One vendor washes the whole order.
+    const vendorIds = [...new Set(catalogItems.map((item) => item.vendorId))];
+    if (vendorIds.length > 1) {
+      throw new BadRequestException({
+        message: 'A laundry order can only use one laundry vendor',
+        code: 'MIXED_LAUNDRY_VENDORS',
+      });
+    }
+    const vendorId = vendorIds[0];
+    if (dto.vendorId && dto.vendorId !== vendorId) {
+      throw new BadRequestException({
+        message: 'These items are not from the chosen laundry vendor',
+        code: 'WRONG_LAUNDRY_VENDOR',
+      });
+    }
+    const vendor = await this.prisma.laundryVendor.findUnique({
+      where: { id: vendorId },
+      select: { status: true, isOpen: true, name: true },
+    });
+    if (!vendor || vendor.status !== 'APPROVED') {
+      throw new NotFoundException('Laundry vendor not found');
+    }
+    if (!vendor.isOpen) {
+      throw new ConflictException({
+        message: `${vendor.name} is not taking orders right now`,
+        code: 'LAUNDRY_VENDOR_CLOSED',
+      });
     }
 
     const catalogMap = new Map(
@@ -107,6 +153,7 @@ export class LaundryService {
         data: {
           customerId,
           idempotencyKey,
+          vendorId,
           addressLabel,
           instructions: dto.instructions,
           pickupMode: dto.pickupMode,
@@ -154,7 +201,7 @@ export class LaundryService {
   findMyOrders(customerId: string) {
     return this.prisma.laundryOrder.findMany({
       where: { customerId },
-      include: { items: true },
+      include: { items: true, vendor: { select: { id: true, name: true, logoUrl: true } } },
       orderBy: { createdAt: 'desc' },
     });
   }
@@ -162,27 +209,58 @@ export class LaundryService {
   private async getOrThrow(id: string) {
     const order = await this.prisma.laundryOrder.findUnique({
       where: { id },
-      include: { items: true },
+      include: { items: true, vendor: { select: { id: true, name: true, logoUrl: true } } },
     });
     if (!order) throw new NotFoundException('Laundry order not found');
     return order;
   }
 
-  // Customers can only read their own orders; laundry staff and admins can
-  // read any. A stranger's order answers "not found", not "forbidden", so ids
-  // can't be probed.
-  async findOne(id: string, requester: { userId: string; role?: string }) {
-    const order = await this.getOrThrow(id);
-    const isStaff = requester.role === 'ADMIN' || requester.role === 'LAUNDRY_STAFF';
-    if (!isStaff && order.customerId !== requester.userId) {
-      throw new NotFoundException('Laundry order not found');
+  // Who may see / work on an order: admins any; laundry staff only their own
+  // vendor's; customers only their own. Anything else answers "not found",
+  // so ids can't be probed.
+  private async assertCanSee(
+    order: { customerId: string; vendorId: string | null },
+    requester: LaundryRequester,
+  ) {
+    if (requester.role === 'ADMIN') return;
+    if (requester.role === 'LAUNDRY_STAFF') {
+      const vendorId = await this.staffVendorId(requester.userId);
+      if ((order.vendorId ?? DEFAULT_LAUNDRY_VENDOR_ID) === vendorId) return;
+    } else if (order.customerId === requester.userId) {
+      return;
     }
+    throw new NotFoundException('Laundry order not found');
+  }
+
+  async findOne(id: string, requester: LaundryRequester) {
+    const order = await this.getOrThrow(id);
+    await this.assertCanSee(order, requester);
     return order;
   }
 
-  // Staff-only — moves an order through the pickup -> wash -> deliver pipeline
-  async updateStatus(id: string, dto: UpdateLaundryStatusDto) {
-    await this.getOrThrow(id);
+  /**
+   * Laundry staff: their vendor's orders. Admins: every order, or one
+   * vendor's with ?vendorId. Newest first, optionally by status.
+   */
+  async staffOrders(requester: LaundryRequester, query: { status?: string; vendorId?: string } = {}) {
+    const vendorId =
+      requester.role === 'ADMIN' ? query.vendorId : await this.staffVendorId(requester.userId);
+    return this.prisma.laundryOrder.findMany({
+      where: {
+        ...(vendorId ? { vendorId } : {}),
+        ...(query.status ? { status: query.status as any } : {}),
+      },
+      include: { items: true, customer: { select: { id: true, fullName: true, phone: true } } },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      take: 200,
+    });
+  }
+
+  // Staff only: moves an order through the pickup -> wash -> deliver pipeline.
+  // Laundry staff can only move their own vendor's orders.
+  async updateStatus(id: string, dto: UpdateLaundryStatusDto, requester?: LaundryRequester) {
+    const order = await this.getOrThrow(id);
+    if (requester) await this.assertCanSee(order, requester);
     const updated = await this.prisma.laundryOrder.update({
       where: { id },
       data: { status: dto.status },

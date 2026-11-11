@@ -595,3 +595,45 @@ Admin console:
   - `POST /admin/preorders/:id/quote` `{ price, estimatedDate, note? }`. The price is the total for the request; it works while `SUBMITTED` or `QUOTED`, so you can re-quote.
   - `PATCH /admin/preorders/:id/status` `{ status: "FULFILLED" | "CANCELLED", note? }`. Fulfilled only from `ACCEPTED`.
 - Admins are notified of new requests (`PREORDER_SUBMITTED`) and of the customer's decision (`PREORDER_ACCEPTED`, `PREORDER_DECLINED`, `PREORDER_CANCELLED`).
+
+## Laundry with several vendors (2.15)
+
+Needs migration `20261111060000_laundry_multivendor`. It creates the vendor **Fastermall Laundry** (`id: "fastermall-laundry"`, approved) and moves every existing catalog item and laundry order onto it. Laundry staff with no vendor count as Fastermall Laundry's. Nothing changes for current customers. Fastermall still runs every pickup and delivery.
+
+**Not built yet:** commission and vendor payouts. `commissionRate` is stored but nothing is calculated or paid.
+
+Customer app (signed in, like the rest of `/laundry`):
+
+- `GET /laundry/vendors` lists approved vendors with `{ id, name, description, logoUrl, location, phone, isOpen, rating, reviewCount }`, open ones first, then best rated. `rating` is the 1–5 average, or `null` without reviews.
+- `GET /laundry/vendors/:id` returns one vendor and its `catalogItems`. `GET /laundry/vendors/:id/catalog` returns just the catalog.
+- `GET /laundry/catalog` (unchanged) is Fastermall Laundry's catalog. Use `?vendorId=` for another vendor's.
+- `POST /laundry/orders`: items must all come from **one** vendor. Optionally send `vendorId` too; it must match the items.
+  - 400 `MIXED_LAUNDRY_VENDORS` or `WRONG_LAUNDRY_VENDOR`.
+  - 409 `LAUNDRY_VENDOR_CLOSED`.
+  - 404 if the vendor isn't approved.
+- Laundry orders now include `vendor: { id, name, logoUrl }`.
+- Reviews:
+  - `GET /laundry/vendors/:id/reviews?page&pageSize` (author is the first name only).
+  - `POST /laundry/vendors/:id/reviews` `{ rating 1–5, comment? }` is one per customer per vendor; posting again edits it. It needs a COMPLETED order with that vendor (403 `REVIEW_NOT_ALLOWED`).
+  - `DELETE /laundry/vendors/:id/reviews/me`.
+
+Laundry staff app:
+
+- `GET /laundry/staff/orders?status=` returns their vendor's orders (admins: all, or `?vendorId=`).
+- Staff can only open and move their own vendor's orders; others answer 404.
+
+Admin console:
+
+| Route | Body / query | Notes |
+| --- | --- | --- |
+| `GET /admin/laundry/vendors` | `?status=PENDING\|APPROVED\|SUSPENDED` | With counts of services, orders, staff |
+| `GET /admin/laundry/vendors/:id` | | With catalog (incl. inactive) and staff |
+| `POST /admin/laundry/vendors` | `name`, `description?`, `logoUrl?` (https), `location?`, `phone?`, `isOpen?`, `commissionRate?` 0–100, `status?` (`PENDING` default, or `APPROVED`) | |
+| `PATCH /admin/laundry/vendors/:id` | the same fields except status | `isOpen: false` stops new orders but keeps it listed |
+| `PATCH /admin/laundry/vendors/:id/status` | `{ status }` | `SUSPENDED` hides it from customers and stops new orders |
+| `POST /admin/laundry/vendors/:id/catalog` | `{ name, description?, unitPrice, isActive? }` | The vendor's own services and prices |
+| `PATCH /admin/laundry/catalog/:itemId` | any of those | `isActive: false` switches a service off; past orders keep their price |
+| `PATCH /admin/laundry/staff/:staffId/vendor` | `{ vendorId }` (null = Fastermall Laundry) | LAUNDRY_STAFF only |
+| `DELETE /admin/laundry/reviews/:id` | | Moderation; the rating is recalculated |
+
+`GET /admin/laundry-orders` rows now include `vendor`.

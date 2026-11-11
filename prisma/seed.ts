@@ -485,11 +485,25 @@ async function main() {
     },
   ];
 
+  // The in-house laundry vendor (also created by the multivendor migration).
+  // Created only if missing, so an admin's edits are kept.
+  await prisma.laundryVendor.upsert({
+    where: { id: 'fastermall-laundry' },
+    update: {},
+    create: {
+      id: 'fastermall-laundry',
+      name: 'Fastermall Laundry',
+      description: 'The original Fastermall laundry service.',
+      status: 'APPROVED',
+    },
+  });
+
   for (const item of laundryCatalogItems) {
+    const data = { ...item, vendorId: 'fastermall-laundry' };
     await prisma.laundryCatalogItem.upsert({
       where: { id: item.id },
-      update: item,
-      create: item,
+      update: data,
+      create: data,
     });
   }
 

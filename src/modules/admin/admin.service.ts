@@ -53,6 +53,7 @@ const ORDER_INCLUDE = {
 
 const LAUNDRY_INCLUDE = {
   customer: CUSTOMER_SELECT,
+  vendor: { select: { id: true, name: true } },
   items: true,
   payment: true,
   delivery: { select: { ...SAFE_DELIVERY_SELECT, ...DELIVERY_PEOPLE } },

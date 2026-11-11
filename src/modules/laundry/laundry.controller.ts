@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Headers, Param, Patch, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Headers, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
 import { parseIdempotencyKey } from '../../shared/utils/idempotency';
 import { LaundryService } from './laundry.service';
 import { CreateLaundryOrderDto } from './dto/create-laundry-order.dto';
@@ -14,9 +14,24 @@ import { StaffRole } from '@prisma/client';
 export class LaundryController {
   constructor(private readonly laundryService: LaundryService) {}
 
+  // ?vendorId= for one vendor's services; without it, Fastermall Laundry's
+  // (what older apps expect).
   @Get('catalog')
-  getCatalog() {
-    return this.laundryService.getCatalog();
+  getCatalog(@Query('vendorId') vendorId?: string) {
+    return this.laundryService.getCatalog(vendorId || undefined);
+  }
+
+  // Laundry staff: their vendor's orders. Admins: all, or ?vendorId=.
+  // Optional ?status=WASHING. Declared before 'orders/:id'.
+  @UseGuards(RolesGuard)
+  @Roles(StaffRole.ADMIN, StaffRole.LAUNDRY_STAFF)
+  @Get('staff/orders')
+  staffOrders(
+    @CurrentUser() user: { userId: string; role?: string },
+    @Query('status') status?: string,
+    @Query('vendorId') vendorId?: string,
+  ) {
+    return this.laundryService.staffOrders(user, { status, vendorId });
   }
 
   @Post('orders')
@@ -48,7 +63,11 @@ export class LaundryController {
   @UseGuards(RolesGuard)
   @Roles(StaffRole.ADMIN, StaffRole.LAUNDRY_STAFF)
   @Patch('orders/:id/status')
-  updateStatus(@Param('id') id: string, @Body() dto: UpdateLaundryStatusDto) {
-    return this.laundryService.updateStatus(id, dto);
+  updateStatus(
+    @CurrentUser() user: { userId: string; role?: string },
+    @Param('id') id: string,
+    @Body() dto: UpdateLaundryStatusDto,
+  ) {
+    return this.laundryService.updateStatus(id, dto, user);
   }
 }

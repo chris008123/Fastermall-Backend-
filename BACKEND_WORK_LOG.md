@@ -113,17 +113,13 @@ Each feature is planned as its own branch, merged into `main`, following the exi
 - [ ] *Pending decision:* paying for an accepted quote (deposit or full, and how it becomes a delivery). Not built.
 - [ ] Not built: picking a design in normal (non-pre-order) checkout; designs have no separate stock.
 
-### 2.15 Laundry multivendor `[ ]`
-- [ ] Add a `LaundryVendor` model: `name`, `description`, `logoUrl`, `location`, `phone`, `status` (PENDING / APPROVED / SUSPENDED), `rating`, `reviewCount`, `isOpen`.
-- [ ] Link `LaundryCatalogItem` to `vendorId`. The migration creates a "Fastermall Laundry" vendor and moves the existing catalog onto it, so nothing breaks.
-- [ ] Link `LaundryOrder` to `vendorId`. An order may only contain one vendor's items.
-- [ ] Link `StaffUser` (LAUNDRY_STAFF) to a vendor, so staff only see and update their vendor's orders.
-- [ ] Public `GET /laundry/vendors` (approved only, sort by rating), `GET /laundry/vendors/:id` and `GET /laundry/vendors/:id/catalog`. Keep `GET /laundry/catalog` working for older apps.
-- [ ] Add `LaundryVendorReview` (one per customer per vendor, only after a COMPLETED order with that vendor), reusing the product review approach with a rating aggregate on the vendor.
-- [ ] Admin endpoints: create, approve or suspend a vendor, manage its catalog, and moderate (delete) reviews.
-- [ ] Delivery stays Fastermall-run (the existing logistics flow).
-- [ ] *Commission and payouts to vendors are pending.* We'll store `commissionRate` (nullable), but there's no settlement logic yet.
-- [ ] Migration.
+### 2.15 Laundry multivendor `[x]`
+- [x] `LaundryVendor` (status, isOpen, rating, reviewCount, commissionRate), `LaundryVendorReview`. Catalog items belong to a vendor, orders record theirs, and laundry staff can be assigned to one. Migration `20261111060000_laundry_multivendor` moves all existing data onto the approved vendor `fastermall-laundry`.
+- [x] Customers: vendor list (approved, open first, best rated), vendor page with catalog, one-vendor orders (approved and open), reviews after a completed order with a rating aggregate. `GET /laundry/catalog` still returns Fastermall Laundry's.
+- [x] Laundry staff: scoped to their vendor (view, list, status), with a new `GET /laundry/staff/orders`.
+- [x] Admin: create (PENDING by default), edit, approve/suspend, catalog per vendor, assign staff, remove reviews. Delivery stays Fastermall-run.
+- [x] 682 tests pass; build clean. Not run against a real database (the throwaway Postgres stays off because of low memory).
+- [ ] *Pending decisions:* commission and payouts to vendors (only `commissionRate` is stored), vendor self-registration (admins onboard vendors for now), and review moderation rules beyond admin deletion.
 
 ---
 
@@ -186,3 +182,4 @@ After each step: `npm test`, `npm run build`, then update this log, `README.md` 
 | 10 Nov 2026 | 2.1 Promotions | Built on `main`. Tests pass; routes verified over HTTP on a throwaway Postgres. |
 | 11 Nov 2026 | 2.12A Custom food orders | Built on `main`. 646 tests pass. Migration/HTTP check on the throwaway DB not done: it was stopped for low memory. |
 | 11 Nov 2026 | 2.12B Pre-orders | Built on `main`. 665 tests pass. Payment for accepted quotes is pending a decision. |
+| 11 Nov 2026 | 2.15 Laundry multivendor | Built on `main`. 682 tests pass. Commission/payouts pending a decision. All 10 planned backend steps are now built. |
