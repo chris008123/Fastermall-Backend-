@@ -519,3 +519,42 @@ Admin console:
 | `POST /admin/promotions/:id/announce` | | Push to all customers (their "announcements" switch is respected). Live promotions only (409 `PROMOTION_NOT_LIVE`), at most once per 12 hours (409 `ALREADY_ANNOUNCED`) |
 
 All admin changes appear in the audit log.
+
+## Customisable food orders (2.12A)
+
+Needs migration `20261111000000_add_menu_item_options`. It adds two new tables and one nullable column on `order_items`.
+
+Example (the Gɔbɛ from the requirement): menu item "Gɔbɛ" at GH₵0, with three groups:
+- "Beans portion", pick exactly 1: Beans GH₵5 or Beans GH₵7;
+- "Plantain", optional: GH₵5 or GH₵6;
+- "Extras", up to 2 kinds: Sausage GH₵3.50, Egg GH₵2 (up to 3 eggs).
+
+Beans 5 + plantain 5 + sausage = GH₵13.50; beans 7 + plantain 6 + egg = GH₵15.
+
+Customer app:
+
+- Menu items (`GET /food/vendors/:id/menu`, `GET /food/vendors/:id`, `GET /food/menu-items/:id`) now have `optionGroups: [{ id, name, minSelect, maxSelect, sortOrder, options: [{ id, name, price, maxQuantity, isAvailable, sortOrder }] }]`, in display order. Items with no groups are plain, as before.
+  - `minSelect` 0 means optional; 1 or more means the customer must pick that many.
+  - `maxSelect` is how many different options may be picked.
+  - `maxQuantity` is how many of one option (e.g. 3 eggs); that counts as one pick.
+  - Grey out `isAvailable: false`.
+- The price shown = item `price` + each chosen option's `price` × its quantity, then × the item quantity. The server works it out the same way; the app never sends prices.
+- Order: each food line can have `options: [{ optionId, quantity? }]` (`quantity` defaults to 1, max 20; at most 30 options per line). The same item with different choices is a separate line; identical lines are merged.
+- Errors (400):
+  - `OPTIONS_REQUIRED`: a required group was not chosen; the message names it.
+  - `INVALID_OPTIONS`: too many picks, an option from another item, a duplicate, or a bad quantity.
+  - `OPTION_UNAVAILABLE`.
+  - "Marketplace products have no options".
+- Orders return `items[].selectedOptions: [{ groupId, groupName, optionId, name, price, quantity }]` (null for plain items). Show these on the order and receipt; `unitPrice` already includes them. They are a copy: later menu changes never alter past orders.
+- **Older app versions** cannot add options, so ordering an item that has a required group fails with `OPTIONS_REQUIRED` until the app is updated. Add required groups only after the new app is out (optional groups are fine).
+
+Admin console / vendors (ADMIN, or the VENDOR who owns that food vendor):
+
+| Route | Body |
+| --- | --- |
+| `POST /food/menu-items/:id/option-groups` | `{ name, minSelect?, maxSelect?, sortOrder? }` (max defaults to min, or 1) |
+| `PATCH /food/option-groups/:id` | any of those (min may not exceed max) |
+| `DELETE /food/option-groups/:id` | removes it with its options |
+| `POST /food/option-groups/:id/options` | `{ name, price?, maxQuantity?, isAvailable?, sortOrder? }` |
+| `PATCH /food/options/:id` | any of those, e.g. `{ "isAvailable": false }` when eggs run out |
+| `DELETE /food/options/:id` | |

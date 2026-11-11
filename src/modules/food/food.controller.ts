@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Param,
   Patch,
@@ -17,6 +18,12 @@ import { CreateVendorDto } from './dto/create-vendor.dto';
 import { CreateMenuItemDto } from './dto/create-menu-item.dto';
 import { UpdateMenuItemDto } from './dto/update-menu-item.dto';
 import { AssignVendorOwnerDto } from './dto/assign-vendor-owner.dto';
+import {
+  CreateOptionDto,
+  CreateOptionGroupDto,
+  UpdateOptionDto,
+  UpdateOptionGroupDto,
+} from './dto/menu-options.dto';
 
 import { JwtAuthGuard } from '../../shared/guards/jwt-auth.guard';
 import { RolesGuard } from '../../shared/guards/roles.guard';
@@ -115,5 +122,72 @@ export class FoodController {
     @Body() dto: UpdateMenuItemDto,
   ) {
     return this.foodService.updateMenuItem(user, id, dto);
+  }
+  // ============================================================
+  // CUSTOMISATION: option groups and options (ADMIN, or the vendor's owner)
+  // ============================================================
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(StaffRole.ADMIN, StaffRole.VENDOR)
+  @Post('menu-items/:id/option-groups')
+  createOptionGroup(
+    @CurrentUser() user: { userId: string; role: string },
+    @Param('id') id: string,
+    @Body() dto: CreateOptionGroupDto,
+  ) {
+    return this.foodService.createOptionGroup(user, id, dto);
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(StaffRole.ADMIN, StaffRole.VENDOR)
+  @Patch('option-groups/:id')
+  updateOptionGroup(
+    @CurrentUser() user: { userId: string; role: string },
+    @Param('id') id: string,
+    @Body() dto: UpdateOptionGroupDto,
+  ) {
+    return this.foodService.updateOptionGroup(user, id, dto);
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(StaffRole.ADMIN, StaffRole.VENDOR)
+  @Delete('option-groups/:id')
+  deleteOptionGroup(
+    @CurrentUser() user: { userId: string; role: string },
+    @Param('id') id: string,
+  ) {
+    return this.foodService.deleteOptionGroup(user, id);
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(StaffRole.ADMIN, StaffRole.VENDOR)
+  @Post('option-groups/:id/options')
+  createOption(
+    @CurrentUser() user: { userId: string; role: string },
+    @Param('id') id: string,
+    @Body() dto: CreateOptionDto,
+  ) {
+    return this.foodService.createOption(user, id, dto);
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(StaffRole.ADMIN, StaffRole.VENDOR)
+  @Patch('options/:id')
+  updateOption(
+    @CurrentUser() user: { userId: string; role: string },
+    @Param('id') id: string,
+    @Body() dto: UpdateOptionDto,
+  ) {
+    return this.foodService.updateOption(user, id, dto);
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(StaffRole.ADMIN, StaffRole.VENDOR)
+  @Delete('options/:id')
+  deleteOption(
+    @CurrentUser() user: { userId: string; role: string },
+    @Param('id') id: string,
+  ) {
+    return this.foodService.deleteOption(user, id);
   }
 }

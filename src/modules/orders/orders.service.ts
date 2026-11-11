@@ -11,7 +11,7 @@ import {
 import { SettingsService } from '../settings/settings.service';
 import { ConfigService } from '@nestjs/config';
 import { EventEmitter2 } from '@nestjs/event-emitter';
-import { DeliveryStatus, OrderStatus, OrderType } from '@prisma/client';
+import { DeliveryStatus, OrderStatus, OrderType, Prisma } from '@prisma/client';
 import { PrismaService } from '../../database/prisma.service';
 import { MarketplaceService } from '../marketplace/marketplace.service';
 import { FoodService } from '../food/food.service';
@@ -33,6 +33,7 @@ import {
   stripDeliverySecrets,
 } from '../../shared/utils/delivery-secrets';
 import { normalizeOrderPaymentMethod } from '../payments/payment-methods';
+import { lineKey, OptionChoice, priceWithOptions } from '../food/menu-options';
 import {
   allowedWindows,
   assignWindow,
@@ -107,24 +108,33 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
 
   // Same product/menu item listed twice is one line with the summed quantity,
   // so a stock check can't be dodged by splitting a quantity across lines.
+  // A customisable food item is "the same" only with the same choices: Gɔbɛ
+  // with egg and Gɔbɛ with sausage stay two lines.
   private mergeItems(
     items: CreateOrderDto['items'],
     key: 'productId' | 'menuItemId',
   ) {
-    const merged = new Map<string, { productId?: string; menuItemId?: string; quantity: number }>();
+    const merged = new Map<
+      string,
+      { productId?: string; menuItemId?: string; quantity: number; options?: OptionChoice[] }
+    >();
     for (const item of items) {
       const id = item[key];
       if (!id) {
         throw new BadRequestException(`Every item needs a ${key}`);
       }
-      const line = merged.get(id) ?? { [key]: id, quantity: 0 };
+      if (key === 'productId' && item.options?.length) {
+        throw new BadRequestException('Marketplace products have no options');
+      }
+      const lk = key === 'menuItemId' ? lineKey(id, item.options) : id;
+      const line = merged.get(lk) ?? { [key]: id, quantity: 0, options: item.options };
       line.quantity += item.quantity;
       if (line.quantity > MAX_LINE_QUANTITY) {
         throw new BadRequestException(
           `You can order at most ${MAX_LINE_QUANTITY} of one item`,
         );
       }
-      merged.set(id, line);
+      merged.set(lk, line);
     }
     return [...merged.values()];
   }
@@ -180,6 +190,7 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
       menuItemId?: string;
       quantity: number;
       unitPrice: number;
+      selectedOptions?: Prisma.InputJsonValue;
     }[];
 
     if (dto.type === OrderType.MARKETPLACE) {
@@ -245,10 +256,17 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
           );
         }
 
+        // Base price plus the chosen options, from the menu (never from the
+        // app). Throws a 400 for a missing required choice or a bad option.
+        const { unitPrice, selectedOptions } = priceWithOptions(menuItem, item.options);
+
         return {
           menuItemId: menuItem.id,
           quantity: item.quantity,
-          unitPrice: Number(menuItem.price),
+          unitPrice,
+          ...(selectedOptions
+            ? { selectedOptions: selectedOptions as unknown as Prisma.InputJsonValue }
+            : {}),
         };
       });
     }

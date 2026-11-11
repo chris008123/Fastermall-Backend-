@@ -135,13 +135,13 @@ Each feature is planned as its own branch, merged into `main`, following the exi
 - [x] Verified: unit tests; migration with no drift; HTTP run of create, schedule, bad button, public list, announce (twice), the customer notification and deactivation.
 - [ ] Decided by default (requirement left it open): admins manage promotions. The 3D look and animation themselves are drawn by the app; the backend only stores the preset.
 
-### 2.12A Customizable food orders `[ ]`
-- [ ] Add `MenuItemOptionGroup` (`name`, `minSelect`, `maxSelect`, `isRequired`, `sortOrder`) and `MenuItemOption` (`name`, `price`, `isAvailable`). This covers the Gɔbɛ example (beans GH₵5 / GH₵7, plantain GH₵5 / GH₵6, extras: sausage, egg).
-- [ ] Return option groups in menu endpoints (`GET /food/vendors/:id/menu`, `GET /food/menu-items/:id`).
-- [ ] `POST /orders`: food items accept `options: [{ optionId, quantity? }]`. The server validates min/max per group and computes `unitPrice = base price + Σ option prices`. The client never sends prices.
-- [ ] Add a `selectedOptions` JSON snapshot (name + price at time of order) on `OrderItem`.
-- [ ] Admin/Vendor CRUD for option groups and options.
-- [ ] Migration.
+### 2.12A Customizable food orders `[x]`
+- [x] `MenuItemOptionGroup` (min/max picks) and `MenuItemOption` (price, maxQuantity, isAvailable). `OrderItem.selectedOptions` snapshot. Migration `20261111000000_add_menu_item_options`.
+- [x] Menu endpoints return `optionGroups`. Admin or owning-vendor CRUD for groups and options, with an ownership check.
+- [x] `POST /orders`: food lines take `options`. Pricing is done on the server (pesewa math) in `src/modules/food/menu-options.ts`, with every rule and the Gɔbɛ example unit-tested. Different choices stay separate lines.
+- [x] 646 tests pass; build clean.
+- [ ] **Not yet verified on a real database:** the throwaway Postgres was stopped by Claude Code because the computer ran low on memory, so the migration and the HTTP run weren't done. Run them before relying on it.
+- [ ] Pending decisions: which items get options (vendors decide per item); whether vendors other than admins should manage them is covered by the VENDOR role.
 
 ### 2.12B Product pre-orders (variants and custom requests) `[ ]`
 - [ ] Add a `ProductVariant` model (`name` such as a design or size, `priceDelta`, `stock`, `imageUrl?`), with an optional `variantId` on marketplace order items.
@@ -223,3 +223,4 @@ After each step: `npm test`, `npm run build`, then update this log, `README.md` 
 | 10 Nov 2026 | 2.8 Delivery windows | Built on `main`. 583 tests pass; migration and full reschedule flow verified against a throwaway Postgres. |
 | 10 Nov 2026 | 2.2 Product images | Built on `main`. 601 tests pass; upload route checked over HTTP without touching the real Supabase project. |
 | 10 Nov 2026 | 2.1 Promotions | Built on `main`. Tests pass; routes verified over HTTP on a throwaway Postgres. |
+| 11 Nov 2026 | 2.12A Custom food orders | Built on `main`. 646 tests pass. Migration/HTTP check on the throwaway DB not done: it was stopped for low memory. |

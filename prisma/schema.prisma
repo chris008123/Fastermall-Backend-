@@ -234,6 +234,8 @@ model MenuItem {
   rating      Float       @default(0)
   vendor      FoodVendor  @relation(fields: [vendorId], references: [id])
   orderItems  OrderItem[]
+  // Choices the customer makes (e.g. beans portion, plantain, extras).
+  optionGroups MenuItemOptionGroup[]
 
   @@map("menu_items")
 }
@@ -283,6 +285,10 @@ model OrderItem {
   menuItem   MenuItem? @relation(fields: [menuItemId], references: [id])
   order      Order     @relation(fields: [orderId], references: [id])
   product    Product?  @relation(fields: [productId], references: [id])
+  // What the customer chose for a customisable food item, copied at order
+  // time: [{ groupId, groupName, optionId, name, price, quantity }]. The
+  // unitPrice above already includes these. Null for plain items.
+  selectedOptions Json?
 
   @@map("order_items")
 }
@@ -820,4 +826,40 @@ model Promotion {
 
   @@index([isActive, startsAt, endsAt])
   @@map("promotions")
+}
+
+// A choice on a menu item, e.g. "Beans portion" (pick exactly 1) or
+// "Extras" (pick up to 3). minSelect 0 = optional.
+model MenuItemOptionGroup {
+  id         String           @id @default(uuid())
+  menuItemId String
+  name       String
+  minSelect  Int              @default(0)
+  maxSelect  Int              @default(1)
+  sortOrder  Int              @default(0)
+  createdAt  DateTime         @default(now())
+  updatedAt  DateTime         @updatedAt
+  menuItem   MenuItem         @relation(fields: [menuItemId], references: [id], onDelete: Cascade)
+  options    MenuItemOption[]
+
+  @@index([menuItemId, sortOrder])
+  @@map("menu_item_option_groups")
+}
+
+// One option in a group, with what it adds to the price (may be 0).
+// maxQuantity > 1 lets the customer take more than one (e.g. 2 eggs).
+model MenuItemOption {
+  id          String              @id @default(uuid())
+  groupId     String
+  name        String
+  price       Decimal             @default(0) @db.Decimal(10, 2)
+  maxQuantity Int                 @default(1)
+  isAvailable Boolean             @default(true)
+  sortOrder   Int                 @default(0)
+  createdAt   DateTime            @default(now())
+  updatedAt   DateTime            @updatedAt
+  group       MenuItemOptionGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+
+  @@index([groupId, sortOrder])
+  @@map("menu_item_options")
 }

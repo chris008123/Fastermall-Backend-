@@ -13,6 +13,18 @@ import {
 import { Type } from 'class-transformer';
 import { OrderType } from '@prisma/client';
 
+export class OptionChoiceInput {
+  @IsString()
+  optionId: string;
+
+  // How many of this option (e.g. 2 eggs). Defaults to 1.
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(20)
+  quantity?: number;
+}
+
 export class OrderItemInput {
   @IsOptional()
   @IsString()
@@ -26,6 +38,15 @@ export class OrderItemInput {
   @Min(1)
   @Max(100)
   quantity: number;
+
+  // Food only: the customer's choices for a customisable item (see
+  // GET /food/menu-items/:id -> optionGroups). The server works out the price.
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(30)
+  @ValidateNested({ each: true })
+  @Type(() => OptionChoiceInput)
+  options?: OptionChoiceInput[];
 }
 
 export class CreateOrderDto {
