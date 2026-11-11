@@ -24,6 +24,7 @@ import { CLEARED_LOCATION } from './presence.service';
 import * as bcrypt from 'bcrypt';
 import { maskNumber } from '../../shared/mask';
 import { afterCursor, toPage } from '../../shared/pagination/cursor';
+import { withCustomerPhoneRule } from '../../shared/utils/customer-phone';
 import { stripDeliverySecrets } from '../../shared/utils/delivery-secrets';
 
 // Short-distance deliveries go to walking partners, longer ones need a motorcycle.
@@ -107,6 +108,9 @@ const DELIVERY_DETAIL_INCLUDE = {
         select: {
           id: true,
           fullName: true,
+          // Only kept in responses while a partner is carrying the order
+          // (withCustomerPhoneRule in withStageHistory).
+          phone: true,
         },
       },
       items: {
@@ -151,11 +155,17 @@ export class LogisticsService {
   // A delivery as the apps see it: no handover-code secrets, no location
   // (see stripDeliverySecrets), plus the timeline as [{ stage, at }], oldest
   // first. `statusEvents` is left in place for older clients.
-  private withStageHistory<T extends { statusEvents?: { status: DeliveryStatus; createdAt: Date }[] }>(
-    delivery: T,
-  ) {
+  // The customer's phone is only kept while a partner is carrying the order.
+  private withStageHistory<
+    T extends {
+      statusEvents?: { status: DeliveryStatus; createdAt: Date }[];
+      partnerId?: string | null;
+      status: DeliveryStatus;
+      order?: { customer?: ({ phone?: string | null } & Record<string, unknown>) | null } | null;
+    },
+  >(delivery: T) {
     return {
-      ...stripDeliverySecrets(delivery),
+      ...stripDeliverySecrets(withCustomerPhoneRule(delivery)),
       stageHistory: (delivery.statusEvents ?? []).map((e) => ({
         stage: e.status,
         at: e.createdAt,
