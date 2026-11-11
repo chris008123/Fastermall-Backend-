@@ -39,6 +39,7 @@ model User {
   deletedAt      DateTime?
   reviews        ProductReview[]
   addresses      Address[]
+  preOrders      PreOrderRequest[]
 
   @@map("users")
 }
@@ -184,6 +185,13 @@ model Product {
   // Photos in display order. imageUrl above is always the first one (or
   // null), so apps that only read imageUrl keep working.
   images      ProductImage[]
+  // Designs / variations the customer can pick when pre-ordering.
+  variants    ProductVariant[]
+  // Customers may request this product made to order (see PreOrderRequest).
+  allowsPreOrder   Boolean @default(false)
+  // Usual days from accepting a quote to delivery, shown in the app.
+  preOrderLeadDays Int?
+  preOrders        PreOrderRequest[]
 
   @@map("products")
 }
@@ -862,4 +870,82 @@ model MenuItemOption {
 
   @@index([groupId, sortOrder])
   @@map("menu_item_options")
+}
+
+// A design or variation of a product, e.g. "Black leather" or "Size 42".
+model ProductVariant {
+  id          String            @id @default(uuid())
+  productId   String
+  name        String
+  description String?
+  // Added to (or, if negative, taken off) the product price.
+  priceDelta  Decimal           @default(0) @db.Decimal(10, 2)
+  imageUrl    String?
+  isActive    Boolean           @default(true)
+  sortOrder   Int               @default(0)
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+  product     Product           @relation(fields: [productId], references: [id], onDelete: Cascade)
+  preOrders   PreOrderRequest[]
+
+  @@index([productId, sortOrder])
+  @@map("product_variants")
+}
+
+enum PreOrderStatus {
+  SUBMITTED
+  QUOTED
+  ACCEPTED
+  DECLINED
+  FULFILLED
+  CANCELLED
+}
+
+// A customer's request for something made to order (requirement 2.12B):
+// a product design, or a fully custom description, with specifications
+// and reference photos. Admins quote a price and date; the customer
+// accepts or declines. Payment for accepted quotes is not decided yet.
+model PreOrderRequest {
+  id             String          @id @default(uuid())
+  customerId     String
+  productId      String?
+  variantId      String?
+  description    String
+  // Free key/value details, e.g. { "size": "42", "colour": "brown" }.
+  specifications Json?
+  quantity       Int             @default(1)
+  status         PreOrderStatus  @default(SUBMITTED)
+  quotedPrice    Decimal?        @db.Decimal(10, 2)
+  estimatedDate  DateTime?
+  quotedAt       DateTime?
+  // Shown to the customer with the quote or a status change.
+  adminNote      String?
+  // Why the customer declined or cancelled.
+  customerNote   String?
+  decidedAt      DateTime?
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+  customer       User            @relation(fields: [customerId], references: [id])
+  product        Product?        @relation(fields: [productId], references: [id], onDelete: SetNull)
+  variant        ProductVariant? @relation(fields: [variantId], references: [id], onDelete: SetNull)
+  images         PreOrderImage[]
+
+  @@index([customerId, createdAt])
+  @@index([status, createdAt])
+  @@map("pre_order_requests")
+}
+
+// A reference photo the customer attached. Stored PRIVATELY (customers'
+// own photos); the API hands out short-lived links.
+model PreOrderImage {
+  id          String          @id @default(uuid())
+  requestId   String
+  path        String
+  contentType String
+  sizeBytes   Int
+  createdAt   DateTime        @default(now())
+  request     PreOrderRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+
+  @@index([requestId])
+  @@map("pre_order_images")
 }

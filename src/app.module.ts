@@ -23,6 +23,7 @@ import { EmailModule } from './shared/email/email.module';
 import { SettingsModule } from './modules/settings/settings.module';
 import { FaqModule } from './modules/faq/faq.module';
 import { PromotionsModule } from './modules/promotions/promotions.module';
+import { PreOrdersModule } from './modules/preorders/preorders.module';
 import { AuditInterceptor } from './shared/interceptors/audit.interceptor';
 
 @Module({
@@ -48,6 +49,7 @@ import { AuditInterceptor } from './shared/interceptors/audit.interceptor';
     AddressesModule,
     FaqModule,
     PromotionsModule,
+    PreOrdersModule,
     EmailModule,
   ],
   providers: [

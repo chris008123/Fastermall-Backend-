@@ -1,4 +1,4 @@
-import { IsNumber, IsOptional, IsString, Min, MinLength } from 'class-validator';
+import { IsBoolean, IsInt, IsNumber, IsOptional, IsString, Max, Min, MinLength } from 'class-validator';
 
 export class CreateProductDto {
   @IsString()
@@ -21,4 +21,16 @@ export class CreateProductDto {
   @IsOptional()
   @IsString()
   categoryId?: string;
+
+  // Customers may request it made to order (POST /preorders).
+  @IsOptional()
+  @IsBoolean()
+  allowsPreOrder?: boolean;
+
+  // Usual days from an accepted quote to delivery, shown in the app.
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(365)
+  preOrderLeadDays?: number;
 }

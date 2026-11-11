@@ -295,6 +295,57 @@ export class NotificationsService {
     else if (event.userId) await this.notifyCustomer(event.userId, input);
   }
 
+  // ───────── Pre-orders ─────────
+
+  // New request: every admin is told so someone quotes it.
+  @OnEvent('preorder.submitted')
+  async onPreOrderSubmitted(event: { requestId: string }) {
+    await this.safely(() =>
+      this.broadcast('ADMIN', 'New pre-order request', `Request ${shortRef(event.requestId)} is waiting for a quote.`, {
+        type: 'PREORDER_SUBMITTED',
+        data: { preOrderId: event.requestId },
+      }),
+    );
+  }
+
+  @OnEvent('preorder.quoted')
+  async onPreOrderQuoted(event: { requestId: string; customerId: string; price: number; estimatedDate: string }) {
+    const date = new Date(event.estimatedDate).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: 'Africa/Accra' });
+    await this.notifyCustomer(event.customerId, {
+      title: 'Your pre-order quote is ready',
+      body: `GH₵ ${event.price.toFixed(2)}, ready around ${date}. Open it to accept or decline.`,
+      type: 'PREORDER_QUOTED',
+      data: { preOrderId: event.requestId },
+      channelId: CHANNELS.orders,
+    });
+  }
+
+  @OnEvent('preorder.status.updated')
+  async onPreOrderStatusUpdated(event: { requestId: string; customerId: string; status: string; note?: string }) {
+    const done = event.status === 'FULFILLED';
+    await this.notifyCustomer(event.customerId, {
+      title: done ? 'Your pre-order is ready' : 'Pre-order cancelled',
+      body: done
+        ? `Pre-order ${shortRef(event.requestId)} is complete.${event.note ? ` ${event.note}` : ''}`
+        : `Pre-order ${shortRef(event.requestId)} was cancelled.${event.note ? ` ${event.note}` : ''}`,
+      type: done ? 'PREORDER_FULFILLED' : 'PREORDER_CANCELLED',
+      data: { preOrderId: event.requestId },
+      channelId: CHANNELS.orders,
+    });
+  }
+
+  // The customer accepted, declined or cancelled: admins need to know.
+  @OnEvent('preorder.customer.decided')
+  async onPreOrderDecided(event: { requestId: string; status: string }) {
+    const verb = event.status === 'ACCEPTED' ? 'accepted' : event.status === 'DECLINED' ? 'declined' : 'cancelled';
+    await this.safely(() =>
+      this.broadcast('ADMIN', `Pre-order ${verb}`, `The customer ${verb} pre-order ${shortRef(event.requestId)}.`, {
+        type: `PREORDER_${event.status}`,
+        data: { preOrderId: event.requestId },
+      }),
+    );
+  }
+
   // Emitted by Orders when the customer moves a marketplace delivery.
   @OnEvent('order.delivery.rescheduled')
   async onDeliveryRescheduled(event: {

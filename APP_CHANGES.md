@@ -558,3 +558,40 @@ Admin console / vendors (ADMIN, or the VENDOR who owns that food vendor):
 | `POST /food/option-groups/:id/options` | `{ name, price?, maxQuantity?, isAvailable?, sortOrder? }` |
 | `PATCH /food/options/:id` | any of those, e.g. `{ "isAvailable": false }` when eggs run out |
 | `DELETE /food/options/:id` | |
+
+## Pre-orders (2.12B)
+
+Needs migration `20261111030000_add_pre_orders`: new tables, one enum, and two defaulted columns on `products`. Customers' reference photos go to the PRIVATE bucket `preorder-references`, created on first upload. The apps get links that last 10 minutes; re-fetch the request to refresh them.
+
+**Not built yet:** paying for an accepted quote. That rule is undecided. Until then, accepting means "agreed", and payment and delivery are arranged outside the app.
+
+Customer app:
+
+- Products have `allowsPreOrder`, `preOrderLeadDays` and `variants: [{ id, name, description, priceDelta, imageUrl }]` (the designs to pick from).
+- `POST /preorders` `{ productId?, variantId?, description, specifications?, quantity? }`:
+  - Leave out the product for a fully custom request.
+  - `specifications` is label → text, e.g. `{ "Size": "42", "Colour": "brown" }`, at most 20 entries.
+  - `description` is 10–2000 characters; `quantity` is 1–20.
+- `POST /preorders/:id/images`: multipart, field `images`. JPEG, PNG or WebP, up to 5 MB each and 5 per request, and only while it is `SUBMITTED`.
+- `GET /preorders` and `GET /preorders/:id` (own requests only).
+  - Each has `status`, `quotedPrice`, `estimatedDate`, `adminNote`, the product and design, and `images: [{ id, url }]`.
+- After a quote (`QUOTED`): `POST /preorders/:id/accept`, or `POST /preorders/:id/decline` `{ note? }`.
+- `POST /preorders/:id/cancel` `{ note? }` works while `SUBMITTED` or `QUOTED`.
+- Statuses: `SUBMITTED`, then `QUOTED`, then `ACCEPTED` (then `FULFILLED`) or `DECLINED`. A request can be `CANCELLED` before it's fulfilled.
+- Notifications: `PREORDER_QUOTED` (price and date), `PREORDER_FULFILLED`, `PREORDER_CANCELLED`, all with `data.preOrderId`.
+- Errors:
+  - 400 `PREORDER_NOT_ALLOWED`, `INVALID_VARIANT` or `INVALID_SPECIFICATIONS`;
+  - 409 `PREORDER_LOCKED`, `TOO_MANY_IMAGES`, `INVALID_PREORDER_STATUS` or `PREORDER_CHANGED`.
+
+Admin console:
+
+- Mark a product as pre-orderable: `PATCH /marketplace/products/:id` `{ allowsPreOrder: true, preOrderLeadDays: 14 }`.
+- Designs:
+  - `POST /marketplace/products/:id/variants` `{ name, description?, priceDelta?, imageUrl? (https), isActive?, sortOrder? }`;
+  - `PATCH /marketplace/variants/:id`;
+  - `DELETE /marketplace/variants/:id`.
+- Requests:
+  - `GET /admin/preorders?status=SUBMITTED`, and `GET /admin/preorders/:id` (with the customer's contact details and photo links).
+  - `POST /admin/preorders/:id/quote` `{ price, estimatedDate, note? }`. The price is the total for the request; it works while `SUBMITTED` or `QUOTED`, so you can re-quote.
+  - `PATCH /admin/preorders/:id/status` `{ status: "FULFILLED" | "CANCELLED", note? }`. Fulfilled only from `ACCEPTED`.
+- Admins are notified of new requests (`PREORDER_SUBMITTED`) and of the customer's decision (`PREORDER_ACCEPTED`, `PREORDER_DECLINED`, `PREORDER_CANCELLED`).

@@ -105,14 +105,13 @@ Each feature is planned as its own branch, merged into `main`, following the exi
 - [ ] **Not yet verified on a real database:** the throwaway Postgres was stopped by Claude Code because the computer ran low on memory, so the migration and the HTTP run weren't done. Run them before relying on it.
 - [ ] Pending decisions: which items get options (vendors decide per item); whether vendors other than admins should manage them is covered by the VENDOR role.
 
-### 2.12B Product pre-orders (variants and custom requests) `[ ]`
-- [ ] Add a `ProductVariant` model (`name` such as a design or size, `priceDelta`, `stock`, `imageUrl?`), with an optional `variantId` on marketplace order items.
-- [ ] Add a `Product.allowsPreOrder` flag.
-- [ ] Add a `PreOrderRequest` model: `customerId`, `productId?`, `variantId?`, `description`, `specifications` (JSON), `referenceImageUrls[]`, `status` (SUBMITTED → QUOTED → ACCEPTED → FULFILLED / CANCELLED), `quotedPrice?`, `estimatedDate?`.
-- [ ] Customer endpoints: `POST /preorders`, `GET /preorders`, `GET /preorders/:id`, plus a reference image upload.
-- [ ] Admin endpoints: list, quote, and change status. The customer is notified.
-- [ ] *Fulfilment and payment rules are pending.* We build the request and quote flow only, and turning an accepted quote into a paid order waits for that decision.
-- [ ] Migration.
+### 2.12B Product pre-orders (variants and custom requests) `[x]`
+- [x] `ProductVariant` (designs, with priceDelta and image), `Product.allowsPreOrder` / `preOrderLeadDays`, `PreOrderRequest` and `PreOrderImage`. Migration `20261111030000_add_pre_orders`.
+- [x] Customer: request (product + design, or fully custom) with specifications, private reference photos (signed links), list/view own, accept/decline a quote, cancel before accepting.
+- [x] Admin: list/view with customer contact, quote and re-quote (price, future date, note), fulfil (from accepted) or cancel, design CRUD. Status changes are atomic. Both sides are notified.
+- [x] 665 tests pass; build clean. Not run against a real database (the throwaway Postgres stays off because of low memory).
+- [ ] *Pending decision:* paying for an accepted quote (deposit or full, and how it becomes a delivery). Not built.
+- [ ] Not built: picking a design in normal (non-pre-order) checkout; designs have no separate stock.
 
 ### 2.15 Laundry multivendor `[ ]`
 - [ ] Add a `LaundryVendor` model: `name`, `description`, `logoUrl`, `location`, `phone`, `status` (PENDING / APPROVED / SUSPENDED), `rating`, `reviewCount`, `isOpen`.
@@ -186,3 +185,4 @@ After each step: `npm test`, `npm run build`, then update this log, `README.md` 
 | 10 Nov 2026 | 2.2 Product images | Built on `main`. 601 tests pass; upload route checked over HTTP without touching the real Supabase project. |
 | 10 Nov 2026 | 2.1 Promotions | Built on `main`. Tests pass; routes verified over HTTP on a throwaway Postgres. |
 | 11 Nov 2026 | 2.12A Custom food orders | Built on `main`. 646 tests pass. Migration/HTTP check on the throwaway DB not done: it was stopped for low memory. |
+| 11 Nov 2026 | 2.12B Pre-orders | Built on `main`. 665 tests pass. Payment for accepted quotes is pending a decision. |

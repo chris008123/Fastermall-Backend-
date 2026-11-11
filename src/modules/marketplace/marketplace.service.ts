@@ -24,6 +24,12 @@ const PRODUCT_INCLUDE = {
     orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }, { id: 'asc' }],
     select: { id: true, url: true, sortOrder: true },
   },
+  // Designs the customer can pick when pre-ordering.
+  variants: {
+    where: { isActive: true },
+    orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
+    select: { id: true, name: true, description: true, priceDelta: true, imageUrl: true, sortOrder: true },
+  },
 } satisfies Prisma.ProductInclude;
 
 // Every sort ends with id so pages never overlap or skip products that tie.

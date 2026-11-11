@@ -10,6 +10,11 @@ export default () => ({
     // PUBLIC Supabase bucket, created automatically on first upload.
     bucket: process.env.PROMOTION_IMAGES_BUCKET || 'promotion-images',
   },
+  preOrders: {
+    // PRIVATE Supabase bucket for customers' reference photos, created on first upload.
+    bucket: process.env.PREORDER_IMAGES_BUCKET || 'preorder-references',
+    maxImages: parseInt(process.env.PREORDER_IMAGES_MAX || '5', 10),
+  },
   documents: {
     bucket: process.env.DOCUMENTS_BUCKET || 'partner-documents',
     maxBytes: parseInt(process.env.DOCUMENT_MAX_BYTES || String(5 * 1024 * 1024), 10),

@@ -112,6 +112,37 @@ export class StorageService {
     return { path, publicUrl: files.getPublicUrl(path).data.publicUrl };
   }
 
+  // ───────── Private buckets (e.g. customers' reference photos) ─────────
+
+  /** Makes sure a PRIVATE bucket exists (files only reachable by signed link). */
+  private async ensurePrivateBucket(bucket: string) {
+    if (this.readyBuckets.has(bucket)) return;
+    const storage = this.client$().storage;
+    const { data } = await storage.getBucket(bucket);
+    if (!data) {
+      const { error } = await storage.createBucket(bucket, { public: false });
+      if (error && !/exist/i.test(error.message)) this.unavailable('bucket setup', error);
+    } else if (data.public) {
+      this.logger.warn(`Bucket ${bucket} is PUBLIC: customers' private photos in it can be seen by anyone with the link`);
+    }
+    this.readyBuckets.add(bucket);
+  }
+
+  async uploadPrivate(bucket: string, path: string, body: Buffer, contentType: string) {
+    await this.ensurePrivateBucket(bucket);
+    const { error } = await this.client$().storage.from(bucket).upload(path, body, { contentType, upsert: false });
+    if (error) this.unavailable('upload', error);
+    return { path };
+  }
+
+  /** Short-lived links to private files, in the same order (null if one failed). */
+  async signedUrls(bucket: string, paths: string[], seconds = 600): Promise<(string | null)[]> {
+    if (paths.length === 0) return [];
+    const { data, error } = await this.client$().storage.from(bucket).createSignedUrls(paths, seconds);
+    if (error || !data) this.unavailable('download URL', error);
+    return paths.map((p) => data.find((d: any) => d.path === p)?.signedUrl ?? null);
+  }
+
   /** Best effort: never throws. */
   async removeFromBucket(bucket: string, paths: string[]) {
     if (paths.length === 0) return;
