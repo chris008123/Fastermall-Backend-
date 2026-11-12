@@ -637,3 +637,21 @@ Admin console:
 | `DELETE /admin/laundry/reviews/:id` | | Moderation; the rating is recalculated |
 
 `GET /admin/laundry-orders` rows now include `vendor`.
+
+## Partner applications
+
+Needs migration `20261112090000_add_partner_applications` (a new enum and table only).
+
+Delivery app (no sign-in):
+
+- `POST /partner-applications` `{ fullName, email, phone, dateOfBirth: "YYYY-MM-DD", address, partnerType: "WALKING" | "MOTORCYCLE", plateNumber? }`. Returns `{ id, status: "PENDING", createdAt }`. Limited to 5 a minute.
+  - `plateNumber` is required for motorcycles. Phone numbers in any common Ghana form become `0241234567`; the email becomes the sign-in email.
+  - 400 `TOO_YOUNG` (under 18) or `INVALID_DATE_OF_BIRTH`; 409 `ACCOUNT_EXISTS` (email or phone already has a staff account) or `APPLICATION_PENDING`.
+- Documents are not part of the application: once approved, the partner signs in and uploads them from Documents.
+
+Admin console:
+
+- `GET /admin/partner-applications?status=PENDING|APPROVED|REJECTED` (newest first, at most 200).
+- `POST /admin/partner-applications/:id/approve` `{ password }` creates the DELIVERY_PARTNER account (email, phone, name, partner type from the application) with that temporary password, in the same transaction as marking it approved. Returns `{ application, account }`. 409 `APPLICATION_REVIEWED` or `ACCOUNT_EXISTS`.
+- `POST /admin/partner-applications/:id/reject` `{ reason }`.
+- The admin passes the temporary password on to the partner; nothing is sent automatically.

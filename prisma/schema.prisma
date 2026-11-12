@@ -669,6 +669,40 @@ enum DeliveryPartnerType {
   MOTORCYCLE
 }
 
+enum PartnerApplicationStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+// Someone applying in the Delivery app to become a delivery partner. They
+// have no account yet: an admin approves the application, which creates the
+// DELIVERY_PARTNER staff account, or rejects it with a reason. Documents are
+// uploaded after approval, from the app's Documents screen.
+model PartnerApplication {
+  id              String                   @id @default(uuid())
+  fullName        String
+  email           String
+  phone           String
+  dateOfBirth     DateTime                 @db.Date
+  address         String
+  partnerType     DeliveryPartnerType
+  plateNumber     String?
+  status          PartnerApplicationStatus @default(PENDING)
+  rejectionReason String?
+  reviewedById    String?
+  reviewedAt      DateTime?
+  // The account created on approval.
+  staffUserId     String?                  @unique
+  createdAt       DateTime                 @default(now())
+  updatedAt       DateTime                 @updatedAt
+
+  @@index([status, createdAt])
+  @@index([phone])
+  @@index([email])
+  @@map("partner_applications")
+}
+
 enum OrderType {
   MARKETPLACE
   FOOD

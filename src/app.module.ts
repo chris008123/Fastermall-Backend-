@@ -22,6 +22,7 @@ import { AddressesModule } from './modules/addresses/addresses.module';
 import { EmailModule } from './shared/email/email.module';
 import { SettingsModule } from './modules/settings/settings.module';
 import { FaqModule } from './modules/faq/faq.module';
+import { PartnerApplicationsModule } from './modules/partner-applications/partner-applications.module';
 import { PromotionsModule } from './modules/promotions/promotions.module';
 import { PreOrdersModule } from './modules/preorders/preorders.module';
 import { AuditInterceptor } from './shared/interceptors/audit.interceptor';
@@ -48,6 +49,7 @@ import { AuditInterceptor } from './shared/interceptors/audit.interceptor';
     AdminModule,
     AddressesModule,
     FaqModule,
+    PartnerApplicationsModule,
     PromotionsModule,
     PreOrdersModule,
     EmailModule,
