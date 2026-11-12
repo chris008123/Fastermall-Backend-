@@ -2,6 +2,9 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as nodemailer from 'nodemailer';
 
+const escapeHtml = (s: string) =>
+  s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+
 @Injectable()
 export class EmailService {
   private readonly logger = new Logger('EmailService');
@@ -40,6 +43,51 @@ export class EmailService {
       // log it loudly so it's caught, but the OTP row still exists so the
       // user can request a resend once the issue is fixed.
       this.logger.error(`Failed to send OTP email to ${to}`, error);
+      throw error;
+    }
+  }
+
+  /**
+   * Tells an approved delivery partner how to sign in. The temporary password
+   * an admin set is included so they can start; they are asked to change it.
+   */
+  async sendPartnerApprovedEmail(to: string, details: { fullName: string; password: string; motorcycle: boolean }) {
+    const name = escapeHtml(details.fullName.split(/\s+/)[0] || details.fullName);
+    const docs = details.motorcycle
+      ? 'your Ghana Card, a selfie, your driver’s licence, vehicle registration and insurance'
+      : 'your Ghana Card and a selfie';
+    try {
+      await this.transporter.sendMail({
+        from: this.config.get<string>('email.from'),
+        to,
+        subject: 'You’re approved to deliver with Fastermall',
+        text: [
+          `Hi ${details.fullName.split(/\s+/)[0] || details.fullName},`,
+          '',
+          'Your application to deliver with Fastermall has been approved.',
+          '',
+          'Sign in to the Fastermall Delivery app with:',
+          `Email: ${to}`,
+          `Temporary password: ${details.password}`,
+          '',
+          `Then go to Settings > Security to change your password, and upload ${docs} from Documents.`,
+          'You can take deliveries once your documents are approved.',
+          '',
+          'If you didn’t apply, reply to this email and we’ll close the account.',
+        ].join('\n'),
+        html: `
+          <div style="font-family: sans-serif; padding: 24px; max-width: 520px;">
+            <h2>You’re approved, ${name}</h2>
+            <p>Your application to deliver with Fastermall has been approved. Sign in to the Fastermall Delivery app with:</p>
+            <p style="font-size: 16px;">Email: <strong>${escapeHtml(to)}</strong><br />
+            Temporary password: <strong style="font-family: monospace; font-size: 18px; letter-spacing: 1px;">${escapeHtml(details.password)}</strong></p>
+            <p>Then go to <strong>Settings &gt; Security</strong> to change your password, and upload ${docs} from <strong>Documents</strong>. You can take deliveries once your documents are approved.</p>
+            <p style="color: #666;">If you didn’t apply, reply to this email and we’ll close the account.</p>
+          </div>
+        `,
+      });
+    } catch (error) {
+      this.logger.error(`Failed to send partner approval email to ${to}`, error);
       throw error;
     }
   }

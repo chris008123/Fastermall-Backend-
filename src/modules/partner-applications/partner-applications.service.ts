@@ -2,11 +2,13 @@ import {
   BadRequestException,
   ConflictException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { DeliveryPartnerType, PartnerApplicationStatus, Prisma, StaffRole } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../../database/prisma.service';
+import { EmailService } from '../../shared/email/email.service';
 import { CreatePartnerApplicationDto } from './dto/partner-application.dto';
 
 const MIN_AGE = 18;
@@ -28,7 +30,12 @@ export function ageOn(birth: Date, now: Date): number {
  */
 @Injectable()
 export class PartnerApplicationsService {
-  constructor(private readonly prisma: PrismaService) {}
+  private readonly logger = new Logger(PartnerApplicationsService.name);
+
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly email: EmailService,
+  ) {}
 
   // What the applicant's app gets back: nothing about other applications.
   private receipt(a: { id: string; status: PartnerApplicationStatus; createdAt: Date }) {
@@ -94,6 +101,24 @@ export class PartnerApplicationsService {
    * (another admin at the same moment) is refused.
    */
   async approve(id: string, adminId: string, password: string) {
+    const result = await this.createAccount(id, adminId, password);
+    // Best effort: the account exists either way. The console tells the admin
+    // to pass the details on by hand when this is false.
+    let emailSent = false;
+    try {
+      await this.email.sendPartnerApprovedEmail(result.account.email ?? '', {
+        fullName: result.account.fullName,
+        password,
+        motorcycle: result.application.partnerType === DeliveryPartnerType.MOTORCYCLE,
+      });
+      emailSent = true;
+    } catch {
+      this.logger.warn(`Approval email not sent for application ${id}`);
+    }
+    return { ...result, emailSent };
+  }
+
+  private async createAccount(id: string, adminId: string, password: string) {
     const passwordHash = await bcrypt.hash(password, 10);
     try {
       return await this.prisma.$transaction(async (tx) => {

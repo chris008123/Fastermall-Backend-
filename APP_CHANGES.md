@@ -654,4 +654,4 @@ Admin console:
 - `GET /admin/partner-applications?status=PENDING|APPROVED|REJECTED` (newest first, at most 200).
 - `POST /admin/partner-applications/:id/approve` `{ password }` creates the DELIVERY_PARTNER account (email, phone, name, partner type from the application) with that temporary password, in the same transaction as marking it approved. Returns `{ application, account }`. 409 `APPLICATION_REVIEWED` or `ACCOUNT_EXISTS`.
 - `POST /admin/partner-applications/:id/reject` `{ reason }`.
-- The admin passes the temporary password on to the partner; nothing is sent automatically.
+- On approval the partner is emailed their sign-in email and temporary password, and asked to change it (Settings > Security) and upload documents. The response has `emailSent`; when it is false (SMTP not set up or failing), the admin passes the details on by hand.
