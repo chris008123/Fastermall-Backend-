@@ -40,8 +40,9 @@ function setup() {
     },
     $transaction: jest.fn((fn: (t: typeof tx) => unknown) => fn(tx)),
   };
-  const service = new PartnerApplicationsService(prisma as never);
-  return { service, prisma, tx };
+  const email = { sendPartnerApprovedEmail: jest.fn().mockResolvedValue(undefined) };
+  const service = new PartnerApplicationsService(prisma as never, email as never);
+  return { service, prisma, tx, email };
 }
 
 describe('PartnerApplicationsService.apply', () => {
@@ -92,6 +93,34 @@ describe('PartnerApplicationsService.approve', () => {
       data: { status: 'APPROVED', reviewedById: 'admin-1', staffUserId: 'staff-1' },
     });
     expect(out.account).toEqual({ id: 'staff-1', email: 'kojo@example.com', fullName: 'Kojo Mensah' });
+  });
+
+  it('emails the partner their sign-in, and still approves if the email fails', async () => {
+    const pending = { id: 'app-1', status: 'PENDING', email: 'kojo@example.com', phone: '0241234567', fullName: 'Kojo Mensah', partnerType: 'MOTORCYCLE' };
+    const a = setup();
+    a.tx.partnerApplication.findUnique.mockResolvedValue(pending);
+    a.tx.partnerApplication.findUniqueOrThrow.mockResolvedValue({ ...pending, status: 'APPROVED' });
+    const ok = await a.service.approve('app-1', 'admin-1', 'temporary-pass');
+    expect(a.email.sendPartnerApprovedEmail).toHaveBeenCalledWith('kojo@example.com', {
+      fullName: 'Kojo Mensah',
+      password: 'temporary-pass',
+      motorcycle: true,
+    });
+    expect(ok.emailSent).toBe(true);
+
+    const b = setup();
+    b.tx.partnerApplication.findUnique.mockResolvedValue(pending);
+    b.email.sendPartnerApprovedEmail.mockRejectedValue(new Error('SMTP down'));
+    const notSent = await b.service.approve('app-1', 'admin-1', 'temporary-pass');
+    expect(notSent.emailSent).toBe(false);
+    expect(notSent.account.id).toBe('staff-1');
+  });
+
+  it('sends no email when the approval itself fails', async () => {
+    const { service, tx, email } = setup();
+    tx.partnerApplication.findUnique.mockResolvedValue({ id: 'app-1', status: 'APPROVED' });
+    await expect(service.approve('app-1', 'admin-1', 'temporary-pass')).rejects.toBeInstanceOf(ConflictException);
+    expect(email.sendPartnerApprovedEmail).not.toHaveBeenCalled();
   });
 
   it('refuses an application that was already reviewed, or reviewed at the same moment', async () => {
