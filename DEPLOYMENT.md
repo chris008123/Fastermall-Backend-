@@ -94,10 +94,11 @@ Check afterwards: `npx prisma migrate status` should say *Database schema is up 
 
 ## 4. One-off data steps
 
-1. **Starter FAQs** (8 questions; only added if missing, never overwrites edits). `ts-node` is a dev dependency, so run it from your machine with production env vars, not on Render:
+1. **Starter FAQs** (8 questions; only added if missing, never overwrites edits). Use `SEED_ONLY=faqs`: a full seed would also add the demo catalog and bring back demo items an admin deleted. `ts-node` is a dev dependency, so run it from your machine with production env vars, not on Render:
    ```bash
-   npx prisma db seed
+   SEED_ONLY=faqs npx prisma db seed
    ```
+   (PowerShell: `$env:SEED_ONLY='faqs'; npx prisma db seed`.) Since this release the seed never overwrites existing rows, so a mistaken full run doesn't undo admin edits.
 2. **Storage buckets.** Public buckets (`product-images`, `promotion-images`) and the private pre-order bucket are created automatically on first upload. Create the **private** `partner-documents` bucket yourself in Supabase → Storage if it doesn't exist (do **not** make it public).
 
 ---
@@ -116,7 +117,7 @@ curl -s -X POST -H "Content-Type: application/json" -d '{}' "$API/partner-applic
 Then, in the admin console:
 
 - **Partner application end to end:** apply in the Delivery app (or with `POST /partner-applications`) using an email you can read → approve in **Delivery Partners** → the toast should say the code was emailed → in the Delivery app use **Set up account or reset password** with that code → sign in → deactivate the test account in **Staff**.
-- Place one marketplace order with Mobile Money or card (cash is refused) and check it shows a delivery window.
+- Place one marketplace order with Mobile Money or card (cash is refused) and check it shows a delivery window. Cancel it from the app: it should be refunded (or show up for a manual refund if Paystack refuses).
 
 ---
 

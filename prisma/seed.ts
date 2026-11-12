@@ -2,7 +2,17 @@ import { PrismaClient } from '@prisma/client';
 
 const prisma = new PrismaClient();
 
+// Safe to run more than once, including on production: everything is
+// created only if missing (update: {}), so prices, stock, names and answers
+// that admins edited are never overwritten.
+//
+// SEED_ONLY=faqs adds just the starter FAQs. Use that on production: the
+// demo catalog (products, vendors, menu, laundry) is for development, and a
+// full seed would bring back demo items an admin deleted.
 async function main() {
+  const onlyFaqs = process.env.SEED_ONLY === 'faqs';
+
+  if (!onlyFaqs) {
   // ============================================================
   // MARKETPLACE
   // ============================================================
@@ -172,7 +182,7 @@ async function main() {
   for (const category of categories) {
     await prisma.category.upsert({
       where: { id: category.id },
-      update: category,
+      update: {},
       create: category,
     });
   }
@@ -180,7 +190,7 @@ async function main() {
   for (const vendor of vendors) {
     await prisma.marketplaceVendor.upsert({
       where: { id: vendor.id },
-      update: vendor,
+      update: {},
       create: vendor,
     });
   }
@@ -188,7 +198,7 @@ async function main() {
   for (const product of products) {
     await prisma.product.upsert({
       where: { id: product.id },
-      update: product,
+      update: {},
       create: product,
     });
   }
@@ -412,7 +422,7 @@ async function main() {
   for (const category of foodCategories) {
     await prisma.foodCategory.upsert({
       where: { id: category.id },
-      update: category,
+      update: {},
       create: category,
     });
   }
@@ -420,7 +430,7 @@ async function main() {
   for (const vendor of foodVendors) {
     await prisma.foodVendor.upsert({
       where: { id: vendor.id },
-      update: vendor,
+      update: {},
       create: vendor,
     });
   }
@@ -428,7 +438,7 @@ async function main() {
   for (const item of foodItems) {
     await prisma.menuItem.upsert({
       where: { id: item.id },
-      update: item,
+      update: {},
       create: item,
     });
   }
@@ -502,7 +512,7 @@ async function main() {
     const data = { ...item, vendorId: 'fastermall-laundry' };
     await prisma.laundryCatalogItem.upsert({
       where: { id: item.id },
-      update: data,
+      update: {},
       create: data,
     });
   }
@@ -511,6 +521,8 @@ async function main() {
     `Seeded ${laundryCatalogItems.length} laundry catalog items.`,
   );
   console.log('Laundry seed completed successfully.');
+
+  } // end of the demo catalog (skipped with SEED_ONLY=faqs)
 
   // ============================================================
   // FAQ
