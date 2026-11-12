@@ -655,3 +655,15 @@ Admin console:
 - `POST /admin/partner-applications/:id/approve` (no body needed; a `password` from older consoles is ignored) creates the DELIVERY_PARTNER account (email, phone, name, partner type from the application) in the same transaction as marking it approved. Returns `{ application, account, emailSent }`. 409 `APPLICATION_REVIEWED` or `ACCOUNT_EXISTS`.
 - `POST /admin/partner-applications/:id/reject` `{ reason }`.
 - On approval nobody chooses a password: the account gets a one-time **setup code**, valid 7 days, emailed to the partner. In the Delivery app they enter email + code + their own password with `POST /staff/password/reset` (the normal staff reset). If the code runs out or the email never arrived, `POST /staff/password/forgot` emails a fresh 15-minute code. When `emailSent` is false (SMTP not set up or failing), the partner can still use that, or an admin can set a password for them in Staff.
+
+## Customers cancel their own orders
+
+No migration.
+
+- `POST /orders/:id/cancel` (customer, own marketplace or food order). Allowed while the order is `PENDING` or `CONFIRMED`, before the vendor starts preparing it. Stock goes back, the delivery is released, and a partner who had already taken it is told (`DELIVERY_CANCELLED`).
+- Returns `{ id, status: "CANCELLED", refund }`, where `refund` is:
+  - `NOT_PAID`: nothing was paid.
+  - `REFUNDED`: the online payment was refunded through the provider.
+  - `PENDING_ADMIN`: the provider refused the automatic refund. The order stays cancelled and the payment stays `SUCCESSFUL`, so it shows up for an admin to refund from the console.
+- Errors: 404 for someone else's order; 409 `ORDER_NOT_CANCELLABLE` (already preparing or cancelled) or `ORDER_CHANGED` (it moved on at the same moment).
+- Laundry orders still can't be cancelled in the app.

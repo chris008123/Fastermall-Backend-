@@ -9,6 +9,7 @@ import {
   Optional,
 } from '@nestjs/common';
 import { SettingsService } from '../settings/settings.service';
+import { PaymentsService } from '../payments/payments.service';
 import { ConfigService } from '@nestjs/config';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { DeliveryStatus, OrderStatus, OrderType, Prisma } from '@prisma/client';
@@ -86,7 +87,60 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
     private readonly config: ConfigService,
     private readonly addresses: AddressesService,
     @Optional() private readonly settings?: SettingsService,
+    @Optional() private readonly payments?: PaymentsService,
   ) {}
+
+  /**
+   * The customer cancels their own marketplace or food order (POST
+   * /orders/:id/cancel). Allowed until the vendor starts preparing it
+   * (PENDING or CONFIRMED); stock goes back and a partner already assigned is
+   * told. An order paid online is refunded automatically; if the provider
+   * refuses, the order stays cancelled and the payment is left SUCCESSFUL so
+   * an admin can refund it from the console (`refund: "PENDING_ADMIN"`).
+   */
+  async cancelByCustomer(id: string, userId: string) {
+    const order = await this.prisma.order.findFirst({
+      where: { id, customerId: userId },
+      include: { items: true, payment: true },
+    });
+    if (!order) throw new NotFoundException('Order not found');
+
+    const cancellable: OrderStatus[] = [OrderStatus.PENDING, OrderStatus.CONFIRMED];
+    if (!cancellable.includes(order.status)) {
+      throw new ConflictException({
+        message:
+          order.status === OrderStatus.CANCELLED
+            ? 'This order is already cancelled'
+            : 'This order is already being prepared, so it can’t be cancelled in the app. Contact support for help.',
+        code: 'ORDER_NOT_CANCELLABLE',
+      });
+    }
+
+    const cancelled = await this.cancelAndRestock(order, cancellable);
+    if (!cancelled) {
+      throw new ConflictException({ message: 'This order just changed. Refresh and try again.', code: 'ORDER_CHANGED' });
+    }
+
+    const fresh = await this.prisma.order.findUnique({
+      where: { id },
+      include: { items: { include: { product: true, menuItem: true } }, payment: true, delivery: true },
+    });
+    if (fresh) this.events.emit('order.status.updated', fresh);
+
+    let refund: 'NOT_PAID' | 'REFUNDED' | 'PENDING_ADMIN' = 'NOT_PAID';
+    if (order.payment?.status === 'SUCCESSFUL') {
+      try {
+        if (!this.payments) throw new Error('Payments unavailable');
+        await this.payments.refund(order.payment.id, `customer:${userId}`, 'Cancelled by the customer');
+        refund = 'REFUNDED';
+      } catch (error) {
+        this.logger.warn(`Order ${id}: automatic refund failed, left for an admin (${(error as Error).message})`);
+        refund = 'PENDING_ADMIN';
+      }
+    }
+
+    return { id, status: OrderStatus.CANCELLED, refund };
+  }
 
   /** The current time. A method so tests can pin it. */
   protected now() {

@@ -52,6 +52,12 @@ export class OrdersController {
     return this.ordersService.rescheduleDelivery(id, user.userId, dto.windowStart);
   }
 
+  // The customer cancels their own order before it is being prepared.
+  @Post(':id/cancel')
+  cancel(@CurrentUser() user: { userId: string }, @Param('id') id: string) {
+    return this.ordersService.cancelByCustomer(id, user.userId);
+  }
+
   @Get(':id')
   findOne(
     @CurrentUser() user: { userId: string },
