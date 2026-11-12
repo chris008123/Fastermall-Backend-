@@ -71,12 +71,13 @@ export class PartnerApplicationQueryDto {
 }
 
 export class ApprovePartnerApplicationDto {
-  // The temporary password the admin gives the new partner (same rule as
-  // creating a staff account).
+  // Deprecated and ignored: older consoles sent a temporary password. The
+  // partner now sets their own with the emailed setup code. Kept so those
+  // requests aren't refused for an unknown field.
+  @IsOptional()
   @IsString()
-  @MinLength(8)
   @MaxLength(100)
-  password!: string;
+  password?: string;
 }
 
 export class RejectPartnerApplicationDto {

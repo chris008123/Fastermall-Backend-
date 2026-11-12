@@ -37,10 +37,11 @@ export class AdminPartnerApplicationsController {
     return this.applications.list(q.status);
   }
 
-  // Creates the DELIVERY_PARTNER account with this temporary password.
+  // Creates the DELIVERY_PARTNER account and emails the partner a setup code.
+  // The body is optional; a `password` from older consoles is ignored.
   @Post(':id/approve')
-  approve(@Param('id') id: string, @CurrentUser() user: { userId: string }, @Body() dto: ApprovePartnerApplicationDto) {
-    return this.applications.approve(id, user.userId, dto.password);
+  approve(@Param('id') id: string, @CurrentUser() user: { userId: string }, @Body() _dto: ApprovePartnerApplicationDto) {
+    return this.applications.approve(id, user.userId);
   }
 
   @Post(':id/reject')

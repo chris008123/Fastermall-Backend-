@@ -216,6 +216,12 @@ describe('StaffService — sessions', () => {
       expect(email.sendPasswordResetEmail).not.toHaveBeenCalled();
     });
 
+    it('replaces a long partner setup code at once instead of waiting for it to expire', async () => {
+      prisma.staffUser.findUnique.mockResolvedValue({ ...user, resetExpiresAt: new Date(Date.now() + 6 * 24 * 60 * 60 * 1000) });
+      await expect(svc.forgotPassword({ email: 'a@b.com' })).resolves.toEqual(generic);
+      expect(email.sendPasswordResetEmail).toHaveBeenCalledTimes(1);
+    });
+
     it('does not reveal an email failure', async () => {
       email.sendPasswordResetEmail.mockRejectedValue(new Error('smtp down'));
       await expect(svc.forgotPassword({ email: 'a@b.com' })).resolves.toEqual(generic);

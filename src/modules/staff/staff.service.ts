@@ -169,7 +169,11 @@ export class StaffService {
     if (!user || !user.isActive) return generic;
 
     // One email a minute per account, so it cannot be used to flood an inbox.
-    if (user.resetExpiresAt) {
+    // Only a normal (15-minute) code counts: a longer setup code from partner
+    // approval would otherwise block "Email me a new code" for days.
+    const isShortCode =
+      user.resetExpiresAt && user.resetExpiresAt.getTime() - Date.now() <= RESET_EXPIRY_MINUTES * 60 * 1000;
+    if (user.resetExpiresAt && isShortCode) {
       const sentAt = user.resetExpiresAt.getTime() - RESET_EXPIRY_MINUTES * 60 * 1000;
       if (Date.now() - sentAt < RESET_RESEND_SECONDS * 1000) return generic;
     }
