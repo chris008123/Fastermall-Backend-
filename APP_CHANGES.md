@@ -652,6 +652,6 @@ Delivery app (no sign-in):
 Admin console:
 
 - `GET /admin/partner-applications?status=PENDING|APPROVED|REJECTED` (newest first, at most 200).
-- `POST /admin/partner-applications/:id/approve` `{ password }` creates the DELIVERY_PARTNER account (email, phone, name, partner type from the application) with that temporary password, in the same transaction as marking it approved. Returns `{ application, account }`. 409 `APPLICATION_REVIEWED` or `ACCOUNT_EXISTS`.
+- `POST /admin/partner-applications/:id/approve` (no body needed; a `password` from older consoles is ignored) creates the DELIVERY_PARTNER account (email, phone, name, partner type from the application) in the same transaction as marking it approved. Returns `{ application, account, emailSent }`. 409 `APPLICATION_REVIEWED` or `ACCOUNT_EXISTS`.
 - `POST /admin/partner-applications/:id/reject` `{ reason }`.
-- On approval the partner is emailed their sign-in email and temporary password, and asked to change it (Settings > Security) and upload documents. The response has `emailSent`; when it is false (SMTP not set up or failing), the admin passes the details on by hand.
+- On approval nobody chooses a password: the account gets a one-time **setup code**, valid 7 days, emailed to the partner. In the Delivery app they enter email + code + their own password with `POST /staff/password/reset` (the normal staff reset). If the code runs out or the email never arrived, `POST /staff/password/forgot` emails a fresh 15-minute code. When `emailSent` is false (SMTP not set up or failing), the partner can still use that, or an admin can set a password for them in Staff.

@@ -7,11 +7,17 @@ import {
 } from '@nestjs/common';
 import { DeliveryPartnerType, PartnerApplicationStatus, Prisma, StaffRole } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
+import { randomBytes, randomInt } from 'crypto';
 import { PrismaService } from '../../database/prisma.service';
 import { EmailService } from '../../shared/email/email.service';
 import { CreatePartnerApplicationDto } from './dto/partner-application.dto';
 
 const MIN_AGE = 18;
+
+// How long the emailed setup code works. Longer than a password-reset code
+// (15 minutes) because a new partner may not open the email straight away;
+// "Email me a new code" in the app replaces it with a fresh short one.
+export const SETUP_CODE_DAYS = 7;
 
 /** Whole years between `birth` and `now` (UTC dates). Exported for tests. */
 export function ageOn(birth: Date, now: Date): number {
@@ -25,8 +31,10 @@ export function ageOn(birth: Date, now: Date): number {
 
 /**
  * Applications to become a delivery partner. Applying needs no account; an
- * admin approves (which creates the DELIVERY_PARTNER staff account with a
- * temporary password the admin passes on) or rejects with a reason.
+ * admin approves (which creates the DELIVERY_PARTNER staff account and emails
+ * a one-time setup code; the partner chooses their own password in the app,
+ * through the staff password-reset route) or rejects with a reason. No
+ * password is ever chosen by an admin or sent by email.
  */
 @Injectable()
 export class PartnerApplicationsService {
@@ -100,15 +108,18 @@ export class PartnerApplicationsService {
    * in one transaction: if either fails, neither happens. A second approval
    * (another admin at the same moment) is refused.
    */
-  async approve(id: string, adminId: string, password: string) {
-    const result = await this.createAccount(id, adminId, password);
-    // Best effort: the account exists either way. The console tells the admin
-    // to pass the details on by hand when this is false.
+  async approve(id: string, adminId: string, now: Date = new Date()) {
+    const code = randomInt(100000, 1000000).toString();
+    const result = await this.createAccount(id, adminId, code, now);
+    // Best effort: the account exists either way. If this is false the
+    // partner can still use "Email me a new code" in the app, or an admin can
+    // set a password for them in Staff.
     let emailSent = false;
     try {
       await this.email.sendPartnerApprovedEmail(result.account.email ?? '', {
         fullName: result.account.fullName,
-        password,
+        code,
+        validDays: SETUP_CODE_DAYS,
         motorcycle: result.application.partnerType === DeliveryPartnerType.MOTORCYCLE,
       });
       emailSent = true;
@@ -118,8 +129,10 @@ export class PartnerApplicationsService {
     return { ...result, emailSent };
   }
 
-  private async createAccount(id: string, adminId: string, password: string) {
-    const passwordHash = await bcrypt.hash(password, 10);
+  private async createAccount(id: string, adminId: string, setupCode: string, now: Date) {
+    // Nobody knows this password: the partner sets theirs with the code.
+    const passwordHash = await bcrypt.hash(randomBytes(32).toString('base64url'), 10);
+    const resetCodeHash = await bcrypt.hash(setupCode, 10);
     try {
       return await this.prisma.$transaction(async (tx) => {
         const app = await tx.partnerApplication.findUnique({ where: { id } });
@@ -135,6 +148,10 @@ export class PartnerApplicationsService {
             fullName: app.fullName,
             role: StaffRole.DELIVERY_PARTNER,
             passwordHash,
+            // The same fields POST /staff/password/reset checks.
+            resetCodeHash,
+            resetExpiresAt: new Date(now.getTime() + SETUP_CODE_DAYS * 24 * 60 * 60 * 1000),
+            resetAttempts: 0,
           },
         });
         await tx.deliveryPartnerProfile.create({ data: { staffUserId: staffUser.id, type: app.partnerType } });

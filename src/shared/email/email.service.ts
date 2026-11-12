@@ -48,10 +48,11 @@ export class EmailService {
   }
 
   /**
-   * Tells an approved delivery partner how to sign in. The temporary password
-   * an admin set is included so they can start; they are asked to change it.
+   * Tells an approved delivery partner how to set up their account: a
+   * one-time code they enter in the app with a password of their choice.
+   * No password is ever sent by email.
    */
-  async sendPartnerApprovedEmail(to: string, details: { fullName: string; password: string; motorcycle: boolean }) {
+  async sendPartnerApprovedEmail(to: string, details: { fullName: string; code: string; validDays: number; motorcycle: boolean }) {
     const name = escapeHtml(details.fullName.split(/\s+/)[0] || details.fullName);
     const docs = details.motorcycle
       ? 'your Ghana Card, a selfie, your driver’s licence, vehicle registration and insurance'
@@ -66,22 +67,28 @@ export class EmailService {
           '',
           'Your application to deliver with Fastermall has been approved.',
           '',
-          'Sign in to the Fastermall Delivery app with:',
-          `Email: ${to}`,
-          `Temporary password: ${details.password}`,
+          'To set up your account:',
+          '1. Open the Fastermall Delivery app and tap "Set up account or reset password" on the sign-in screen.',
+          `2. Enter your email (${to}) and this code: ${details.code}`,
+          '3. Choose your password, then sign in.',
           '',
-          `Then go to Settings > Security to change your password, and upload ${docs} from Documents.`,
-          'You can take deliveries once your documents are approved.',
+          `The code works for ${details.validDays} days. If it runs out, tap "Email me a new code" in the same screen.`,
+          `After signing in, upload ${docs} from Documents. You can take deliveries once they are approved.`,
           '',
           'If you didn’t apply, reply to this email and we’ll close the account.',
         ].join('\n'),
         html: `
           <div style="font-family: sans-serif; padding: 24px; max-width: 520px;">
             <h2>You’re approved, ${name}</h2>
-            <p>Your application to deliver with Fastermall has been approved. Sign in to the Fastermall Delivery app with:</p>
-            <p style="font-size: 16px;">Email: <strong>${escapeHtml(to)}</strong><br />
-            Temporary password: <strong style="font-family: monospace; font-size: 18px; letter-spacing: 1px;">${escapeHtml(details.password)}</strong></p>
-            <p>Then go to <strong>Settings &gt; Security</strong> to change your password, and upload ${docs} from <strong>Documents</strong>. You can take deliveries once your documents are approved.</p>
+            <p>Your application to deliver with Fastermall has been approved. To set up your account:</p>
+            <ol>
+              <li>Open the Fastermall Delivery app and tap <strong>Set up account or reset password</strong> on the sign-in screen.</li>
+              <li>Enter your email (<strong>${escapeHtml(to)}</strong>) and this code:</li>
+            </ol>
+            <p style="font-size: 32px; font-weight: bold; letter-spacing: 4px;">${escapeHtml(details.code)}</p>
+            <ol start="3"><li>Choose your password, then sign in.</li></ol>
+            <p>The code works for ${details.validDays} days. If it runs out, tap <strong>Email me a new code</strong> on the same screen.</p>
+            <p>After signing in, upload ${docs} from <strong>Documents</strong>. You can take deliveries once they are approved.</p>
             <p style="color: #666;">If you didn’t apply, reply to this email and we’ll close the account.</p>
           </div>
         `,

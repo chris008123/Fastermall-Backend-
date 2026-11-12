@@ -3,7 +3,8 @@ import { Prisma } from '@prisma/client';
 import { plainToInstance } from 'class-transformer';
 import { validateSync } from 'class-validator';
 import { CreatePartnerApplicationDto } from './dto/partner-application.dto';
-import { ageOn, PartnerApplicationsService } from './partner-applications.service';
+import * as bcrypt from 'bcrypt';
+import { ageOn, PartnerApplicationsService, SETUP_CODE_DAYS } from './partner-applications.service';
 
 const now = new Date('2026-11-12T10:00:00Z');
 
@@ -84,9 +85,12 @@ describe('PartnerApplicationsService.approve', () => {
     tx.partnerApplication.findUnique.mockResolvedValue({
       id: 'app-1', status: 'PENDING', email: 'kojo@example.com', phone: '0241234567', fullName: 'Kojo Mensah', partnerType: 'MOTORCYCLE',
     });
-    const out = await service.approve('app-1', 'admin-1', 'temporary-pass');
-    expect(tx.staffUser.create.mock.calls[0][0].data).toMatchObject({ email: 'kojo@example.com', role: 'DELIVERY_PARTNER' });
-    expect(tx.staffUser.create.mock.calls[0][0].data.passwordHash).not.toBe('temporary-pass');
+    const out = await service.approve('app-1', 'admin-1', now);
+    const created = tx.staffUser.create.mock.calls[0][0].data;
+    expect(created).toMatchObject({ email: 'kojo@example.com', role: 'DELIVERY_PARTNER', resetAttempts: 0 });
+    // A setup code (what POST /staff/password/reset checks), valid for a week.
+    expect(created.resetExpiresAt).toEqual(new Date(now.getTime() + SETUP_CODE_DAYS * 24 * 60 * 60 * 1000));
+    expect(typeof created.passwordHash).toBe('string');
     expect(tx.deliveryPartnerProfile.create).toHaveBeenCalledWith({ data: { staffUserId: 'staff-1', type: 'MOTORCYCLE' } });
     expect(tx.partnerApplication.updateMany.mock.calls[0][0]).toMatchObject({
       where: { id: 'app-1', status: 'PENDING' },
@@ -100,18 +104,20 @@ describe('PartnerApplicationsService.approve', () => {
     const a = setup();
     a.tx.partnerApplication.findUnique.mockResolvedValue(pending);
     a.tx.partnerApplication.findUniqueOrThrow.mockResolvedValue({ ...pending, status: 'APPROVED' });
-    const ok = await a.service.approve('app-1', 'admin-1', 'temporary-pass');
-    expect(a.email.sendPartnerApprovedEmail).toHaveBeenCalledWith('kojo@example.com', {
-      fullName: 'Kojo Mensah',
-      password: 'temporary-pass',
-      motorcycle: true,
-    });
+    const ok = await a.service.approve('app-1', 'admin-1', now);
+    const [to, sent] = a.email.sendPartnerApprovedEmail.mock.calls[0];
+    expect(to).toBe('kojo@example.com');
+    expect(sent).toMatchObject({ fullName: 'Kojo Mensah', validDays: SETUP_CODE_DAYS, motorcycle: true });
+    expect(sent.code).toMatch(/^\d{6}$/);
+    // The emailed code is the one stored (hashed) on the account, and no password is emailed.
+    expect(await bcrypt.compare(sent.code, a.tx.staffUser.create.mock.calls[0][0].data.resetCodeHash)).toBe(true);
+    expect(sent).not.toHaveProperty('password');
     expect(ok.emailSent).toBe(true);
 
     const b = setup();
     b.tx.partnerApplication.findUnique.mockResolvedValue(pending);
     b.email.sendPartnerApprovedEmail.mockRejectedValue(new Error('SMTP down'));
-    const notSent = await b.service.approve('app-1', 'admin-1', 'temporary-pass');
+    const notSent = await b.service.approve('app-1', 'admin-1', now);
     expect(notSent.emailSent).toBe(false);
     expect(notSent.account.id).toBe('staff-1');
   });
@@ -119,33 +125,33 @@ describe('PartnerApplicationsService.approve', () => {
   it('sends no email when the approval itself fails', async () => {
     const { service, tx, email } = setup();
     tx.partnerApplication.findUnique.mockResolvedValue({ id: 'app-1', status: 'APPROVED' });
-    await expect(service.approve('app-1', 'admin-1', 'temporary-pass')).rejects.toBeInstanceOf(ConflictException);
+    await expect(service.approve('app-1', 'admin-1', now)).rejects.toBeInstanceOf(ConflictException);
     expect(email.sendPartnerApprovedEmail).not.toHaveBeenCalled();
   });
 
   it('refuses an application that was already reviewed, or reviewed at the same moment', async () => {
     const a = setup();
     a.tx.partnerApplication.findUnique.mockResolvedValue({ id: 'app-1', status: 'REJECTED' });
-    await expect(a.service.approve('app-1', 'admin-1', 'temporary-pass')).rejects.toBeInstanceOf(ConflictException);
+    await expect(a.service.approve('app-1', 'admin-1', now)).rejects.toBeInstanceOf(ConflictException);
     expect(a.tx.staffUser.create).not.toHaveBeenCalled();
 
     const b = setup();
     b.tx.partnerApplication.findUnique.mockResolvedValue({ id: 'app-1', status: 'PENDING', partnerType: 'WALKING' });
     b.tx.partnerApplication.updateMany.mockResolvedValue({ count: 0 });
-    await expect(b.service.approve('app-1', 'admin-1', 'temporary-pass')).rejects.toMatchObject({ response: { code: 'APPLICATION_REVIEWED' } });
+    await expect(b.service.approve('app-1', 'admin-1', now)).rejects.toMatchObject({ response: { code: 'APPLICATION_REVIEWED' } });
   });
 
   it('explains a taken email or phone', async () => {
     const { service, tx } = setup();
     tx.partnerApplication.findUnique.mockResolvedValue({ id: 'app-1', status: 'PENDING', partnerType: 'WALKING' });
     tx.staffUser.create.mockRejectedValue(new Prisma.PrismaClientKnownRequestError('dup', { code: 'P2002', clientVersion: 'x' }));
-    await expect(service.approve('app-1', 'admin-1', 'temporary-pass')).rejects.toMatchObject({ response: { code: 'ACCOUNT_EXISTS' } });
+    await expect(service.approve('app-1', 'admin-1', now)).rejects.toMatchObject({ response: { code: 'ACCOUNT_EXISTS' } });
   });
 
   it('is not found for an unknown id', async () => {
     const { service, tx } = setup();
     tx.partnerApplication.findUnique.mockResolvedValue(null);
-    await expect(service.approve('nope', 'admin-1', 'temporary-pass')).rejects.toBeInstanceOf(NotFoundException);
+    await expect(service.approve('nope', 'admin-1', now)).rejects.toBeInstanceOf(NotFoundException);
   });
 });
 
