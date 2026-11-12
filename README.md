@@ -170,6 +170,10 @@ Delivery handover-code secrets (`deliveryCodeHash`, `deliveryCodeEncrypted`,
 attempt counters) are never returned by any endpoint; see
 `src/shared/utils/delivery-secrets.ts`.
 
+## Deploying
+
+See **[DEPLOYMENT.md](DEPLOYMENT.md)**: environment variables, migrations, one-off steps, smoke tests and admin tasks for each release.
+
 ## Deploying the partner-app merge (Nov 2026)
 
 Run `npx prisma migrate deploy` before starting the new code. It applies the
