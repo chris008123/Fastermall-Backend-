@@ -44,6 +44,7 @@ src/
     support/               # support tickets and replies
     promotions/            # scheduled in-app promotions
     faq/                   # FAQ
+    legal/                 # privacy policy and terms: public pages, edited by admins
     admin/                 # dashboard, cross-customer lists, audit log
     settings/              # platform settings (fees, maintenance, WhatsApp)
     app-config/            # minimum app versions and support contacts

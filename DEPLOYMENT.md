@@ -81,7 +81,8 @@ Production API: `https://fastermall-super-app-backend.onrender.com/api/v1`
 | ★ `PROMOTION_IMAGES_BUCKET` | `promotion-images` | Public bucket |
 | ★ `PREORDER_IMAGES_BUCKET` / `PREORDER_IMAGES_MAX` | `preorder-references` / `5` | Private bucket |
 | `APP_MIN_VERSION_PARTNER`, `APP_MIN_VERSION_CUSTOMER`, `APP_UPDATE_URL_PARTNER`, `APP_UPDATE_URL_CUSTOMER` | | Force-update prompt in the apps (see section 7) |
-| `MAINTENANCE_MODE`, `MAINTENANCE_MESSAGE`, `SUPPORT_PHONE`, `SUPPORT_EMAIL`, `PRIVACY_URL`, `TERMS_URL` | | Served at `GET /app/config` |
+| `MAINTENANCE_MODE`, `MAINTENANCE_MESSAGE`, `SUPPORT_PHONE`, `SUPPORT_EMAIL` | | Served at `GET /app/config` |
+| ★ `PRIVACY_URL`, `TERMS_URL` | | Served at `GET /app/config`. Set to `https://fastermall-super-app-backend.onrender.com/api/v1/legal/privacy/page` and `…/legal/terms/page`: the pages admins edit in the console (Settings → Legal pages) |
 
 `ORDER_PAYMENT_TIMEOUT_MINUTES` (default `30`): unpaid orders with no payment started are cancelled and restocked after this many minutes. Orders where a payment was started always get 24 hours. Before 13 Nov 2026 this variable was ignored.
 
@@ -113,6 +114,7 @@ Migrations added in this release, all additive (new tables, nullable or defaulte
 | `20261111060000_laundry_multivendor` | Laundry vendors + reviews; creates **Fastermall Laundry** (`fastermall-laundry`) and moves existing catalog and orders onto it |
 | `20261112090000_add_partner_applications` | Partner applications table + enum |
 | `20261113120000_product_image_thumbnails` | Thumbnail, width and height on product photos; thumbnail on products (nullable columns) |
+| `20261113150000_add_legal_pages` | Legal pages table, filled with the draft privacy policy and terms of use (new table only) |
 
 Check afterwards: `npx prisma migrate status` should say *Database schema is up to date*.
 

@@ -678,3 +678,19 @@ No migration.
 - **Refunds:** `POST /payments/:id/refund` now marks the payment `REFUNDED` before calling Paystack and puts it back to `SUCCESSFUL` if Paystack refuses. A second refund of the same payment at the same moment gets a 409 and never reaches Paystack.
 - `ORDER_PAYMENT_TIMEOUT_MINUTES` is now read (default 30).
 
+## Legal pages: privacy policy and terms of use (13 Nov 2026)
+
+Needs migration `20261113150000_add_legal_pages` (new table; it starts with the drafts from `legal/`). Admins edit the text in the console; nothing in the apps needs a release to pick up a change.
+
+Apps and anyone (no login):
+
+- `GET /legal/privacy` and `GET /legal/terms` return `{ slug, title, content, version, publishedAt }`. `content` is Markdown (headings, lists, tables, links). Cached 5 minutes.
+- `GET /legal/privacy/page` and `GET /legal/terms/page` return the same page as a self-contained, mobile-friendly web page (light and dark). Set `PRIVACY_URL` / `TERMS_URL` in Render to these, so `GET /app/config` hands them to both apps; the apps open them in a browser.
+- Unknown page: 404.
+
+Admin console:
+
+- `GET /admin/legal` lists both pages, with `version`, `publishedAt`, `updatedById`, `updatedAt`.
+- `PUT /admin/legal/:slug` with `{ title?, content }` publishes at once as the next version (`publishedAt` = now). Sending the same text again changes nothing. `content` must be 50 to 100,000 characters. Each publish is in the audit log as `admin.legal.put`.
+- Raw HTML in the text is shown as text, never run; links may only be web, email, phone or relative; images are dropped.
+

@@ -25,6 +25,7 @@ import { FaqModule } from './modules/faq/faq.module';
 import { PartnerApplicationsModule } from './modules/partner-applications/partner-applications.module';
 import { PromotionsModule } from './modules/promotions/promotions.module';
 import { PreOrdersModule } from './modules/preorders/preorders.module';
+import { LegalModule } from './modules/legal/legal.module';
 import { AuditInterceptor } from './shared/interceptors/audit.interceptor';
 
 @Module({
@@ -52,6 +53,7 @@ import { AuditInterceptor } from './shared/interceptors/audit.interceptor';
     PartnerApplicationsModule,
     PromotionsModule,
     PreOrdersModule,
+    LegalModule,
     EmailModule,
   ],
   providers: [

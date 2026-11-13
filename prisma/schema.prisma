@@ -819,6 +819,22 @@ model Faq {
   @@map("faqs")
 }
 
+// Privacy policy and terms of use, edited by admins and shown publicly
+// (GET /legal/:slug and its web page). Each publish bumps the version.
+model LegalPage {
+  slug        String   @id // "privacy" | "terms"
+  title       String
+  // Markdown. Raw HTML in it is shown as text, never run.
+  content     String
+  version     Int      @default(1)
+  publishedAt DateTime @default(now())
+  // The admin who published this version (staff id; kept if they leave).
+  updatedById String?
+  updatedAt   DateTime @updatedAt
+
+  @@map("legal_pages")
+}
+
 // A product photo stored in the public product-images bucket.
 model ProductImage {
   id            String   @id @default(uuid())
