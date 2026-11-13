@@ -30,7 +30,7 @@ pres.theme = { headFontFace: THEME.headFontFace, bodyFontFace: THEME.bodyFontFac
 const C = pres.SchemeColor;
 
 const W = 13.333, H = 7.5, M = 0.6;
-const FOOT = 'Fastermall backend · explained & audited · 13 Nov 2026';
+const FOOT = 'Fastermall backend \u00B7 explained & audited \u00B7 updated 13 Nov 2026';
 
 // ── layouts ──────────────────────────────────────────────────────────
 pres.defineSlideMaster({
@@ -100,7 +100,7 @@ sec('Introduction');
   const s = slide('TITLE_DARK');
   s.addText('How the Fastermall backend works', { placeholder: 'title' });
   s.addText('A plain-English tour of the system behind the Customer app, the Delivery app and the Admin console, with a full audit and recommendations.', { placeholder: 'body' });
-  s.addText('Prepared 13 November 2026 · based on the main branch at commit c26445c', { x: M, y: 6.6, w: 10, h: 0.4, fontSize: 13, color: HEX.lt2, margin: 0, isTextBox: true });
+  s.addText('Prepared 13 November 2026, updated after the audit fixes \u00B7 main branch at commit 8972d9e', { x: M, y: 6.6, w: 10, h: 0.4, fontSize: 13, color: HEX.lt2, margin: 0, isTextBox: true });
   s.addNotes('Welcome. This deck explains the Fastermall backend to people who do not write code. Every picture in it is also saved separately in the images folder. The last part is an audit: what is strong, what needs attention, and what to do next.');
 }
 {
@@ -141,9 +141,9 @@ sec('The big picture');
     ['18', 'departments (modules)', 'each owns one area, such as orders or laundry', HEX.accent1],
     ['192', 'doors (API routes)', 'the exact requests the apps are allowed to make', HEX.accent2],
     ['42', 'tables of data', 'customers, products, orders, payments and more', HEX.accent4],
-    ['39', 'database updates', 'migrations, each one adding to the structure safely', HEX.accent6],
-    ['708', 'automatic tests', 'all passing on 13 Nov 2026, in 49 test files', HEX.accent3],
-    ['150', 'saved changes (commits)', 'since the project started on 10 Sep 2026', HEX.accent5],
+    ['40', 'database updates', 'migrations, each one adding to the structure safely', HEX.accent6],
+    ['743', 'automatic tests', 'all passing on 13 Nov 2026, in 52 test files', HEX.accent3],
+    ['153', 'saved changes (commits)', 'since the project started on 10 Sep 2026', HEX.accent5],
   ];
   stats.forEach(([n, l, d, col], i) => {
     const x = M + (i % 3) * 4.1, y = 1.45 + Math.floor(i / 3) * 2.65;
@@ -251,6 +251,13 @@ sec('How work flows');
 }
 {
   const s = slide();
+  title(s, 'Journey 6: a photo an admin uploads');
+  const y = image(s, '15-photo-uploads', IMGBOX, 'Six steps from upload to storage, and how much smaller a typical photo becomes');
+  caption(s, 'Added 13 Nov 2026 for product photos and promotion images. Admins upload as before.', y + 0.1);
+  s.addNotes('Before this change, photos were stored exactly as uploaded, so a 3 MB phone photo was sent to every customer at 3 MB. Now the backend converts each upload: it checks it is a real picture, turns it upright, removes hidden data such as the GPS location where it was taken, shrinks it to at most 1600 pixels and saves it as WebP, a modern format about a third smaller than JPEG. Product photos also get a 400 pixel thumbnail for lists. The customer app needs a small update to use the thumbnail (thumbnailUrl, falling back to url for older photos).');
+}
+{
+  const s = slide();
   title(s, 'Other journeys in brief');
   const cards = [
     ['Custom pre-orders', 'Customer asks for a design or something custom, adds photos. Admin sends a price and date. Customer accepts or declines. Admin marks it fulfilled. Paying for it is not built yet.', HEX.accent2],
@@ -310,30 +317,31 @@ sec('Audit');
   title(s, 'How the audit was done');
   const steps = [
     ['Read the code', 'Entry point, all 18 modules, login checks, payments, orders, delivery, shared tools'],
-    ['Ran every test', '708 automatic tests in 49 files: all passed. Type check: no errors'],
+    ['Ran every test', '743 automatic tests in 52 files: all passed. Type check and build: no errors'],
     ['Scanned libraries', 'npm audit of the 3rd-party packages the server runs on'],
-    ['Compared docs to code', 'README, work log, APP_CHANGES and DEPLOYMENT against what the code really does'],
+    ['Ran the migrations', 'All 40 on a throwaway database, empty and with older laundry data'],
+    ['Compared docs to code', 'README, work log, APP_CHANGES and DEPLOYMENT against what the code does'],
     ['Checked for leaked secrets', 'Git history searched for the .env file: never committed'],
   ];
   steps.forEach(([h, b], i) => {
-    const y = 1.4 + i * 1.02;
+    const y = 1.35 + i * 0.86;
     s.addShape(pres.shapes.OVAL, { x: M, y: y + 0.08, w: 0.6, h: 0.6, fill: { color: HEX.accent1 }, line: { color: HEX.accent1 } });
     s.addText(String(i + 1), { x: M, y: y + 0.08, w: 0.6, h: 0.6, fontSize: 18, bold: true, color: 'FFFFFF', align: 'center', valign: 'middle', margin: 0, isTextBox: true });
     s.addText(h, { x: M + 0.85, y, w: 6.6, h: 0.4, fontSize: 18, bold: true, color: C.text2, margin: 0, isTextBox: true });
-    s.addText(b, { x: M + 0.85, y: y + 0.4, w: 6.6, h: 0.45, fontSize: 14, color: C.text1, margin: 0, isTextBox: true });
+    s.addText(b, { x: M + 0.85, y: y + 0.38, w: 6.6, h: 0.4, fontSize: 14, color: C.text1, margin: 0, isTextBox: true });
   });
   s.addShape(pres.shapes.ROUNDED_RECTANGLE, { x: 8.4, y: 1.4, w: 4.33, h: 4.95, rectRadius: 0.12, fill: { color: HEX.lt2 }, line: { color: HEX.lt2 }, objectName: 'tests panel' });
-  s.addText('708 / 708', { x: 8.6, y: 2.0, w: 3.95, h: 1.1, fontSize: 50, bold: true, color: HEX.accent3, align: 'center', fontFace: THEME.headFontFace, margin: 0, isTextBox: true });
+  s.addText('743 / 743', { x: 8.6, y: 2.0, w: 3.95, h: 1.1, fontSize: 50, bold: true, color: HEX.accent3, align: 'center', fontFace: THEME.headFontFace, margin: 0, isTextBox: true });
   s.addText('automatic tests passed', { x: 8.6, y: 3.1, w: 3.95, h: 0.45, fontSize: 18, bold: true, color: C.text1, align: 'center', margin: 0, isTextBox: true });
   s.addText('Each test is a small program that checks one rule, for example “a customer cannot pay for someone else’s order”. They run in about a minute.', { x: 8.75, y: 3.75, w: 3.65, h: 1.8, fontSize: 14, color: '5B6B73', align: 'left', margin: 0, isTextBox: true, valign: 'top' });
-  s.addNotes('Limits of this audit: it is a code review, not a penetration test. The live Render server, Supabase project and Paystack account were not touched, and the newest database migrations were not run against a real database in this audit.');
+  s.addNotes('Limits of this audit: it is a code review, not a penetration test. The live Render server and Paystack account were not touched. Migrations were run on a throwaway local Postgres, not on a copy of production data.');
 }
 {
   const s = slide();
   title(s, 'Scorecard');
   const y = image(s, '13-audit-scorecard', IMGBOX, 'Grades for nine areas: payments A, login A, tests A, structure A-, database B+, settings B, operations B, docs B, libraries C');
-  caption(s, 'Overall: a well-built, carefully tested backend. The biggest risk is outdated libraries, not the team’s own code.', y + 0.1);
-  s.addNotes('Green areas are genuinely strong and above what is typical for a young product. Amber areas are small, specific fixes. The one red area, third-party libraries, is common and fixable with an upgrade.');
+  caption(s, 'After the fixes: green almost everywhere. What remains is the NestJS framework upgrade.', y + 0.1);
+  s.addNotes('Grades as of 13 Nov 2026, after the audit fixes and the photo conversion were pushed. Before the fixes, settings, operations, database changes and documentation were B grades and third-party libraries a C. The one amber area left is the NestJS framework version, which needs a planned upgrade.');
 }
 {
   const s = slide();
@@ -344,51 +352,55 @@ sec('Audit');
     ['Strong login protection', 'Lockout after 5 wrong passwords, rate limits, revocable staff sessions, scrambled passwords and codes.', HEX.accent4],
     ['Nothing gets lost', 'Stock is reserved atomically and given back on failure or expiry. Migrations only ever add.', HEX.accent2],
     ['Every admin action recorded', 'The audit log stores who changed what, with passwords and codes blanked out.', HEX.accent6],
-    ['Thoroughly tested and documented', '708 tests; detailed notes for the app teams and a deployment checklist.', HEX.accent5],
+    ['Thoroughly tested and documented', '743 tests; detailed notes for the app teams and a deployment checklist.', HEX.accent5],
   ];
   items.forEach(([h, b, col], i) => card(s, M + (i % 3) * 4.1, 1.4 + Math.floor(i / 3) * 2.65, 3.85, 2.4, h, b, col, { bodySize: 14, headSize: 17 }));
   s.addNotes('These are the reasons the payments and login areas scored an A.');
 }
 {
   const s = slide();
-  title(s, 'Findings, in plain English');
+  title(s, 'Findings, and what was done');
   const sev = { HIGH: HEX.accent5, MEDIUM: HEX.accent6, LOW: HEX.accent1 };
+  const FIXED = HEX.accent3, PART = HEX.accent6, OPEN = '5B6B73';
   const rows = [
-    ['HIGH', 'Outdated libraries', '16 known weaknesses in borrowed code (2 critical, 7 high)', 'Run npm audit fix; plan a NestJS upgrade'],
-    ['MEDIUM', 'Failed refunds only logged', 'If an automatic refund after a cancel fails, no admin is told', 'Add an admin list or alert for “cancelled but still paid”'],
-    ['MEDIUM', 'Newest migrations untested', 'Food options, pre-orders and laundry vendors never ran on a real database', 'Run them on a copy of production first'],
-    ['MEDIUM', 'Payment timeout setting ignored', 'ORDER_PAYMENT_TIMEOUT_MINUTES is documented but never read; always 30 min', 'One line in src/config/configuration.ts'],
-    ['LOW', 'Unclear error for staff', 'A staff login placing an order gets a vague server error, not “not allowed”', 'Use the existing assertCustomer check'],
-    ['LOW', 'Refund double-click', 'Two admins refunding at once could both ask Paystack', 'Mark the refund as started before calling Paystack'],
-    ['LOW', 'Timers inside the server', 'Clean-up jobs pause if the server sleeps', 'Fine for one server; move to a scheduler later'],
-    ['LOW', 'Out-of-date notes', 'README still says modules are “stubbed”; a leftover schema-additions file', 'Refresh README; delete the leftover file'],
+    ['HIGH', 'Outdated libraries', '16 known weaknesses in borrowed code (2 critical, 7 high)', 'Partly fixed: 11 left, none critical. Rest needs the NestJS upgrade', PART],
+    ['MEDIUM', 'Failed refunds only logged', 'A refused automatic refund after a cancel told no admin', 'Fixed: every admin is alerted; \u201Cneeds refund\u201D list and count', FIXED],
+    ['MEDIUM', 'Newest migrations untested', 'Three migrations had never run on a real database', 'Fixed: all 40 run on a test database, no drift', FIXED],
+    ['MEDIUM', 'Payment timeout ignored', 'ORDER_PAYMENT_TIMEOUT_MINUTES was never read', 'Fixed: the setting now works (default 30 min)', FIXED],
+    ['LOW', 'Unclear error for staff', 'Staff logins on customer routes got a vague server error', 'Fixed: a clear \u201Cnot allowed\u201D (403)', FIXED],
+    ['LOW', 'Refund double-click', 'Two refunds at once could both reach Paystack', 'Fixed: the refund is locked before calling Paystack', FIXED],
+    ['LOW', 'Timers inside the server', 'Clean-up jobs pause if the server sleeps', 'Kept by design; fine on a plan that doesn\u2019t sleep', OPEN],
+    ['LOW', 'Out-of-date notes', 'README said modules were \u201Cstubbed\u201D; a leftover file', 'Fixed: README rewritten, file removed', FIXED],
   ];
-  const hdr = ['Level', 'Finding', 'What it means', 'Fix'].map((t) => ({ text: t, options: { bold: true, color: 'FFFFFF', fill: { color: HEX.dk2 } } }));
-  const data = [hdr, ...rows.map(([lv, f, m, fx], i) => {
+  const hdr = ['Level', 'Finding', 'What it meant', 'Status'].map((t) => ({ text: t, options: { bold: true, color: 'FFFFFF', fill: { color: HEX.dk2 } } }));
+  const data = [hdr, ...rows.map(([lv, f, m, st, stCol], i) => {
     const fill = { color: i % 2 ? 'FFFFFF' : HEX.lt2 };
     return [
       { text: lv, options: { bold: true, color: sev[lv], fill } },
       { text: f, options: { bold: true, fill } },
       { text: m, options: { fill } },
-      { text: fx, options: { fill } },
+      { text: st, options: { bold: true, color: stCol, fill } },
     ];
   })];
-  s.addTable(data, { x: M, y: 1.3, w: W - 2 * M, colW: [1.05, 2.6, 4.6, 3.88], fontSize: 12.5, color: HEX.dk1, border: { type: 'none' }, margin: [3, 6, 3, 6], valign: 'middle', rowH: 0.6, objectName: 'findings table' });
-  s.addNotes('Details for the developer:\n1. npm audit (production deps): critical proxy-addr and tar; high multer, body-parser, @nestjs/platform-express, @nestjs/config, lodash, brace-expansion, @mapbox/node-pre-gyp.\n2. OrdersService.cancelByCustomer returns refund PENDING_ADMIN and logs a warning; nothing in the admin API lists these orders.\n3. BACKEND_WORK_LOG.md says migrations 20261111000000, 20261111030000 and 20261111060000 were not run on a real Postgres.\n4. orders.service.ts reads orders.paymentTimeoutMinutes, which configuration.ts never defines.\n5. POST /orders, /laundry/orders, /payments/initialize, /preorders do not call assertCustomer; the foreign key to users then fails with a 500.\n6. PaymentsService.refund calls the provider before the conditional status update.\n7. setInterval sweeps in OrdersService and PresenceService.\n8. README "What\'s real vs. stubbed"; prisma/schema-additions.prisma.');
+  s.addTable(data, { x: M, y: 1.3, w: W - 2 * M, colW: [1.0, 2.45, 4.3, 4.38], fontSize: 12.5, color: HEX.dk1, border: { type: 'none' }, margin: [3, 6, 3, 6], valign: 'middle', rowH: 0.6, objectName: 'findings table' });
+  s.addNotes('Fixed in commits 1ef6f5f (audit fixes) and 8972d9e (photos and migration check), 13 Nov 2026.\n1. npm audit fix and bcrypt 6: production audit 16 -> 11 (critical 2 -> 0, high 7 -> 5, moderate 7 -> 6). The rest sit in NestJS 10 packages (platform-express: body-parser, multer, qs; config: lodash; common: file-type).\n2. OrdersService.cancelByCustomer emits order.refund.failed; Notifications broadcasts REFUND_NEEDED to admins; GET /admin/payments?needsRefund=true; dashboard refundsNeeded.\n3. All 40 migrations applied to embedded Postgres, from empty and over pre-multivendor laundry data; prisma migrate diff reports no difference.\n4. configuration.ts orders.paymentTimeoutMinutes.\n5. CustomerGuard on orders, laundry orders and reviews, payments and pre-orders.\n6. PaymentsService.refund claims SUCCESSFUL -> REFUNDED first and reverts if Paystack refuses.\n7. setInterval sweeps in OrdersService and PresenceService left as they are.\n8. README rewritten; prisma/schema-additions.prisma deleted.');
 }
 {
   const s = slide();
   title(s, 'The library risk in detail');
-  s.addChart(pres.charts.BAR, [{ name: 'Known weaknesses', labels: ['Critical', 'High', 'Moderate'], values: [2, 7, 7] }], {
-    x: M, y: 1.4, w: 6.2, h: 4.9, barDir: 'bar', chartColors: [HEX.accent5, HEX.accent2, HEX.accent6],
+  s.addChart(pres.charts.BAR, [
+    { name: 'Before the fixes', labels: ['Critical', 'High', 'Moderate'], values: [2, 7, 7] },
+    { name: 'After the fixes', labels: ['Critical', 'High', 'Moderate'], values: [0, 5, 6] },
+  ], {
+    x: M, y: 1.4, w: 6.2, h: 4.9, barDir: 'bar', chartColors: ['B8C7CC', HEX.accent5], barGapWidthPct: 60, catAxisOrientation: 'maxMin',
     showTitle: true, title: 'Known weaknesses by severity (npm audit, 13 Nov 2026)', titleFontSize: 14, titleColor: HEX.dk1, titleFontFace: '+mn-lt',
     showValue: true, dataLabelPosition: 'outEnd', dataLabelFontSize: 14, dataLabelColor: HEX.dk1, dataLabelFontFace: '+mn-lt',
     catAxisLabelColor: '5B6B73', valAxisLabelColor: '5B6B73', catAxisLabelFontSize: 14, valAxisLabelFontSize: 12, catAxisLabelFontFace: '+mn-lt', valAxisLabelFontFace: '+mn-lt',
-    valGridLine: { color: 'DCE6E9', size: 0.75 }, catGridLine: { style: 'none' }, showLegend: false, valAxisMaxVal: 8, valAxisMajorUnit: 2,
+    valGridLine: { color: 'DCE6E9', size: 0.75 }, catGridLine: { style: 'none' }, showLegend: true, legendPos: 'b', legendFontSize: 12, legendColor: '5B6B73', legendFontFace: '+mn-lt', valAxisMaxVal: 8, valAxisMajorUnit: 2,
     objectName: 'vulnerability chart',
   });
-  card(s, 7.15, 1.4, 5.58, 2.3, 'Quick win (no code changes)', 'npm audit fix updates proxy-addr, tar, qs, nodemailer, brace-expansion and others within their current versions. Run the tests afterwards.', HEX.accent3, { bodySize: 14 });
-  card(s, 7.15, 4.0, 5.58, 2.3, 'Bigger job (plan it)', 'The rest sit inside the NestJS framework itself (v10). They go away with a major framework upgrade, which needs a day or two of testing.', HEX.accent5, { bodySize: 14 });
+  card(s, 7.15, 1.4, 5.58, 2.3, 'Done on 13 Nov 2026', 'npm audit fix plus bcrypt 6 removed both critical issues and five others (proxy-addr, tar, nodemailer, brace-expansion and more). All tests still pass.', HEX.accent3, { bodySize: 14 });
+  card(s, 7.15, 4.0, 5.58, 2.3, 'Still to plan', 'The 11 left sit inside the NestJS framework itself (v10). They go away with a major framework upgrade, which needs a day or two of testing against a running server.', HEX.accent5, { bodySize: 14 });
   s.addNotes('Borrowed code (libraries) is like ingredients from a supplier: when the supplier announces a recall, you swap the ingredient. Most of these weaknesses need unusual conditions to exploit, but critical and high ones should not be left for long.');
 }
 {
@@ -412,19 +424,19 @@ sec('Audit');
 }
 {
   const s = slide();
-  title(s, 'Recommended next steps');
+  title(s, 'What is left to do');
   const steps = [
-    ['This week', 'Run npm audit fix and the tests. Fix the payment-timeout setting (one line). Refresh the README.', HEX.accent5],
-    ['Before the next release', 'Apply the three newest migrations to a copy of production and run the smoke tests in DEPLOYMENT.md.', HEX.accent2],
-    ['Next sprint', 'Give admins a list of cancelled-but-paid orders. Add the customer-only check to order and payment routes. Lock refunds before calling Paystack.', HEX.accent6],
-    ['This quarter', 'Upgrade NestJS to the current major version. Decide on pre-order payment and laundry payouts.', HEX.accent1],
+    ['Deploy', 'Back up the database. Set SMTP email settings in Render. Pre-deploy: prisma migrate deploy. Add the Paystack webhook URL.', HEX.accent5],
+    ['After deploying', 'Run the smoke tests. Fill in the admin console. Create the private partner-documents bucket. Add the phone-number line to the privacy policy.', HEX.accent2],
+    ['Apps', 'New builds of both apps. Product lists use thumbnailUrl (falling back to url). Then set the minimum app versions.', HEX.accent6],
+    ['Later', 'NestJS framework upgrade. Decide how pre-orders are paid and how laundry vendors are paid.', HEX.accent1],
   ];
   steps.forEach(([h, b, col], i) => {
     const x = M + i * 3.07;
-    card(s, x, 1.45, 2.85, 3.3, h, b, col, { num: i + 1, bodySize: 15, headSize: 17 });
+    card(s, x, 1.45, 2.85, 3.0, h, b, col, { num: i + 1, bodySize: 15, headSize: 17 });
   });
-  s.addText('None of the findings is an emergency. All are ordinary maintenance for a fast-growing product.', { x: M, y: 5.05, w: W - 2 * M, h: 0.5, fontSize: 16, italic: true, color: C.text2, margin: 0, isTextBox: true });
-  s.addNotes('A developer can finish the “this week” items in under an hour. The NestJS upgrade is the only item that needs real planning.');
+  s.addText('Step-by-step details are in DEPLOYMENT.md in the project folder.', { x: M, y: 4.75, w: W - 2 * M, h: 0.5, fontSize: 16, italic: true, color: C.text2, margin: 0, isTextBox: true });
+  s.addNotes('Every code finding that could be fixed has been fixed and pushed. What remains is running the release (DEPLOYMENT.md has a checklist), updating the apps to use the new thumbnails, and two business decisions.');
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -445,19 +457,21 @@ sec('Reference');
     ['Event bus', 'The internal announcement board departments use to share news.'],
     ['Rate limit', 'A cap on how many requests can be made per minute.'],
     ['npm audit', 'A scan of borrowed code for publicly known weaknesses.'],
+    ['WebP', 'A modern picture format, about a third smaller than JPEG.'],
+    ['Thumbnail', 'A small copy of a photo, used in lists so they load fast.'],
   ];
   const mk = (ts) => ts.map(([a, b], i) => [
     { text: a, options: { bold: true, color: HEX.dk2, fill: { color: i % 2 ? 'FFFFFF' : HEX.lt2 } } },
     { text: b, options: { fill: { color: i % 2 ? 'FFFFFF' : HEX.lt2 } } },
   ]);
-  const topt = { fontSize: 14, color: HEX.dk1, border: { type: 'none' }, margin: [4, 8, 4, 8], valign: 'middle', rowH: 0.78 };
-  s.addTable(mk(terms.slice(0, 6)), { x: M, y: 1.35, w: 5.95, colW: [1.9, 4.05], ...topt, objectName: 'glossary 1' });
-  s.addTable(mk(terms.slice(6)), { x: 6.78, y: 1.35, w: 5.95, colW: [1.9, 4.05], ...topt, objectName: 'glossary 2' });
+  const topt = { fontSize: 14, color: HEX.dk1, border: { type: 'none' }, margin: [4, 8, 4, 8], valign: 'middle', rowH: 0.7 };
+  s.addTable(mk(terms.slice(0, 7)), { x: M, y: 1.35, w: 5.95, colW: [1.9, 4.05], ...topt, objectName: 'glossary 1' });
+  s.addTable(mk(terms.slice(7)), { x: 6.78, y: 1.35, w: 5.95, colW: [1.9, 4.05], ...topt, objectName: 'glossary 2' });
 }
 {
   const s = slide('TITLE_DARK');
   s.addText('In one sentence', { placeholder: 'title' });
-  s.addText('A well-organised, carefully tested backend that handles money and logins safely; keep its libraries up to date and close the few small gaps listed in the audit.', { placeholder: 'body' });
+  s.addText('A well-organised, carefully tested backend that handles money, logins and photos safely. The audit findings are fixed; what remains is the release itself and a planned framework upgrade.', { placeholder: 'body' });
   s.addText('All pictures are in presentation/images (PNG and SVG). Details for developers are in the speaker notes.', { x: M, y: 6.6, w: 12, h: 0.4, fontSize: 13, color: HEX.lt2, margin: 0, isTextBox: true });
 }
 

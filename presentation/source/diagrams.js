@@ -266,7 +266,7 @@ function save(name, w, h, body) {
   b += arrow(payX, y + bh + 3, 300, 468, { color: 'red', dash: true });
   b += box(40, 475, 490, 150, { fill: 'redLight', stroke: 'red', title: 'Never paid?', sub: 'After 30 minutes (24 h if payment was started) the order is cancelled automatically and the stock goes back on the shelf.', titleSize: 21, subSize: 16.5 });
   b += arrow(confX, y + bh + 3, confX, 468, { color: 'amber', dash: true });
-  b += box(555, 475, 490, 150, { fill: 'amberLight', stroke: 'amber', title: 'Customer cancels?', sub: 'Allowed before preparing starts. Stock returns and a paid order is refunded automatically (or left for an admin).', titleSize: 21, subSize: 16.5 });
+  b += box(555, 475, 490, 150, { fill: 'amberLight', stroke: 'amber', title: 'Customer cancels?', sub: 'Allowed before preparing starts. Stock returns and a paid order is refunded automatically; if that fails, every admin is alerted.', titleSize: 21, subSize: 16.5 });
   b += box(1070, 475, 490, 150, { fill: 'tealPale', stroke: 'tealMid', title: 'Good to know: delivery windows', sub: 'Marketplace orders get a slot: before 9:00 → same morning, 9:00–14:59 → afternoon, later → next morning. Can be moved twice.', titleSize: 21, subSize: 16 });
   b += txt(800, 680, 'Retrying a slow request is safe: an “idempotency key” stops the same order being created twice.', { size: 19, color: 'grey', italic: true });
   b += txt(800, 720, 'Every step sends the customer a notification (in-app list + phone push).', { size: 19, color: 'grey', italic: true });
@@ -476,26 +476,27 @@ function save(name, w, h, body) {
 {
   const W = 1600, H = 800; let b = '';
   const rows = [
-    ['Payments & money safety', 'A', 'green', 'Server-side prices, signed webhooks, re-verified amounts, no double charging'],
-    ['Login & access control', 'A', 'green', 'Roles, revocable staff sessions, lockouts, rate limits'],
-    ['Automated tests', 'A', 'green', '708 tests in 49 suites, all passing; type check clean'],
-    ['Code structure', 'A−', 'green', '18 clear departments, shared rules in one place'],
-    ['Database changes', 'B+', 'amber', '39 additive migrations; 3 newest not yet tried on a real database'],
-    ['Settings & config', 'B', 'amber', 'One documented setting (payment timeout) is silently ignored'],
-    ['Operations & recovery', 'B', 'amber', 'Failed automatic refunds are only written to the server log'],
-    ['Documentation', 'B', 'amber', 'Very detailed, but README still calls modules “stubbed”'],
-    ['Third-party libraries', 'C', 'red', '16 known vulnerabilities (2 critical, 7 high); framework upgrade due'],
+    ['Payments & money safety', 'A', 'green', 'Server-side prices, signed webhooks, refunds locked against double clicks'],
+    ['Login & access control', 'A', 'green', 'Roles, revocable sessions, lockouts; staff refused on customer routes (403)'],
+    ['Automated tests', 'A', 'green', '743 tests in 52 suites, all passing; type check and build clean'],
+    ['Code structure', 'A\u2212', 'green', '18 clear departments, shared rules in one place'],
+    ['Database changes', 'A\u2212', 'green', 'All 40 migrations run on a test database: no drift, laundry data moved'],
+    ['Settings & config', 'A', 'green', 'Payment timeout setting now works; unsafe settings stop start-up'],
+    ['Operations & recovery', 'A\u2212', 'green', 'Failed refunds alert every admin and appear in a \u201Cneeds refund\u201D list'],
+    ['Photos & storage', 'A', 'green', 'Uploads converted to WebP, resized, GPS removed, with thumbnails'],
+    ['Documentation', 'A\u2212', 'green', 'README, deployment checklist and API notes up to date'],
+    ['Third-party libraries', 'B\u2212', 'amber', '11 known weaknesses left (0 critical, was 16); NestJS upgrade due'],
   ];
   b += txt(60, 40, 'AREA', { size: 18, bold: true, color: 'grey', anchor: 'start' });
   b += txt(560, 40, 'GRADE', { size: 18, bold: true, color: 'grey' });
   b += txt(660, 40, 'WHY', { size: 18, bold: true, color: 'grey', anchor: 'start' });
   rows.forEach(([a, g, col, why], i) => {
-    const y = 70 + i * 80;
-    b += `<rect x="40" y="${y}" width="1520" height="68" rx="12" fill="${c(i % 2 ? 'white' : 'tealPale')}"/>`;
-    b += txt(60, y + 34, a, { size: 22, bold: true, anchor: 'start' });
-    b += `<rect x="515" y="${y + 10}" width="90" height="48" rx="24" fill="${c(col)}"/>`;
-    b += txt(560, y + 35, g, { size: 24, bold: true, color: 'white' });
-    b += txt(660, y + 34, why, { size: 19.5, color: 'ink', anchor: 'start' });
+    const y = 66 + i * 73;
+    b += `<rect x="40" y="${y}" width="1520" height="62" rx="12" fill="${c(i % 2 ? 'white' : 'tealPale')}"/>`;
+    b += txt(60, y + 31, a, { size: 22, bold: true, anchor: 'start' });
+    b += `<rect x="515" y="${y + 8}" width="90" height="46" rx="23" fill="${c(col)}"/>`;
+    b += txt(560, y + 32, g, { size: 24, bold: true, color: 'white' });
+    b += txt(660, y + 31, why, { size: 19.5, color: 'ink', anchor: 'start' });
   });
   save('13-audit-scorecard', W, H, b);
 }
@@ -522,6 +523,43 @@ function save(name, w, h, body) {
   b += box(30, 320, 760, 190, { fill: 'orangeLight', stroke: 'orange', title: 'Back up first', sub: 'Take a Supabase backup before every release. All migrations in this release only add things, but a backup makes any mistake reversible.', titleSize: 21, subSize: 17 });
   b += box(810, 320, 760, 190, { fill: 'redLight', stroke: 'red', title: 'Secrets never go in Git', sub: 'Passwords and keys live only in Render’s settings and a local .env file (which Git ignores). The server refuses to start in production with unsafe values.', titleSize: 21, subSize: 17 });
   save('14-deploy-flow', W, H, b);
+}
+
+// ── 15 Photo uploads ─────────────────────────────────────────────────
+{
+  const W = 1600, H = 720; let b = '';
+  b += txt(800, 40, 'WHAT HAPPENS TO A PHOTO AN ADMIN UPLOADS', { size: 24, bold: true, color: 'teal' });
+  const st = [
+    ['Upload', 'JPEG, PNG or WebP, up to 5 MB, from the admin console', 'tealMid'],
+    ['Checked', 'Real type read from the file; broken or over 40 MP refused', 'red'],
+    ['Cleaned', 'Turned upright; GPS location and camera details removed', 'purple'],
+    ['Resized', 'Longest side at most 1600 px (never enlarged)', 'orange'],
+    ['Converted', 'Saved as WebP, plus a 400 px thumbnail', 'green'],
+    ['Stored', 'Public Supabase bucket, cached for a year', 'tealMid'],
+  ];
+  const bw = 230, gap = 34, y = 110, bh = 210;
+  st.forEach(([t, s2, col], i) => {
+    const x = 30 + i * (bw + gap);
+    b += box(x, y, bw, bh, { fill: 'white', stroke: col, sw: 3, title: t, sub: s2, titleSize: 23, subSize: 17 });
+    b += badge(x + bw / 2, y - 2, i + 1, { fill: col, r: 20, size: 19 });
+    if (i < st.length - 1) b += arrow(x + bw + 2, y + bh / 2, x + bw + gap - 2, y + bh / 2, { color: 'grey' });
+  });
+  // Before / after sizes, drawn to scale (bar length = file size).
+  b += txt(60, 395, 'A TYPICAL PHONE PHOTO', { size: 20, bold: true, color: 'grey', anchor: 'start' });
+  const bars = [
+    ['Uploaded (4000 x 3000 JPEG)', 3.0, 'red', '\u2248 3 MB'],
+    ['Product page (1600 px WebP)', 0.25, 'orange', '\u2248 250 KB'],
+    ['Product list (400 px thumbnail)', 0.03, 'green', '\u2248 30 KB'],
+  ];
+  bars.forEach(([label, mb, col, txtv], i) => {
+    const yy = 430 + i * 70;
+    b += txt(60, yy + 22, label, { size: 19, anchor: 'start' });
+    const len = Math.max(8, (mb / 3.0) * 900);
+    b += `<rect x="420" y="${yy + 4}" width="${len}" height="36" rx="8" fill="${c(col)}"/>`;
+    b += txt(420 + len + 16, yy + 22, txtv, { size: 19, bold: true, color: col, anchor: 'start' });
+  });
+  b += txt(800, 670, 'Sizes are typical, not exact. Lists load the thumbnail, so they open fast on mobile data. Older photos stay as they were.', { size: 18, color: 'grey', italic: true });
+  save('15-photo-uploads', W, H, b);
 }
 
 Promise.all(jobs).then(() => console.log('images:', jobs.length)).catch((e) => { console.error(e); process.exit(1); });

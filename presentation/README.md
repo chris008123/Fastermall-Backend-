@@ -2,7 +2,7 @@
 
 A plain-English explanation of the Fastermall backend, with an audit. Written for people who don't write code.
 
-- **`Fastermall_Backend_Explained.pptx`**: the 31-slide deck. The speaker notes hold the technical details (file names, routes) for developers.
+- **`Fastermall_Backend_Explained.pptx`**: the 32-slide deck. The speaker notes hold the technical details (file names, routes) for developers.
 - **`images/`**: every diagram as a PNG (for slides and chat) and an SVG (sharp at any size).
 
 | Image | Shows |
@@ -19,10 +19,11 @@ A plain-English explanation of the Fastermall backend, with an audit. Written fo
 | `10-event-bus` | How modules tell each other news |
 | `11-data-map` | The 42 database tables in six groups |
 | `12-security-layers` | The layers of protection |
-| `13-audit-scorecard` | Audit grades for nine areas |
+| `13-audit-scorecard` | Audit grades for ten areas, after the fixes |
 | `14-deploy-flow` | How new code goes live |
+| `15-photo-uploads` | What happens to a photo an admin uploads (WebP, resizing, thumbnails) |
 
-The audit reflects `main` at commit `c26445c` (13 Nov 2026): 708/708 tests passing, type check clean, `npm audit` (production dependencies) reporting 16 known vulnerabilities.
+The audit was first run on `main` at `c26445c` (13 Nov 2026): 708/708 tests, 16 known library vulnerabilities. The deck now shows the state after the fixes, at `8972d9e`: 743/743 tests, every code finding fixed except the timers kept by design, and 11 library vulnerabilities left (none critical) pending the NestJS upgrade.
 
 ## Regenerating
 
