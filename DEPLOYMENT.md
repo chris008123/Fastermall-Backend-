@@ -83,7 +83,7 @@ Production API: `https://fastermall-super-app-backend.onrender.com/api/v1`
 | `APP_MIN_VERSION_PARTNER`, `APP_MIN_VERSION_CUSTOMER`, `APP_UPDATE_URL_PARTNER`, `APP_UPDATE_URL_CUSTOMER` | | Force-update prompt in the apps (see section 7) |
 | `MAINTENANCE_MODE`, `MAINTENANCE_MESSAGE`, `SUPPORT_PHONE`, `SUPPORT_EMAIL`, `PRIVACY_URL`, `TERMS_URL` | | Served at `GET /app/config` |
 
-`ORDER_PAYMENT_TIMEOUT_MINUTES` is mentioned in `APP_CHANGES.md` but the code doesn't read it yet: unpaid orders always expire after 30 minutes (24 hours once a payment was started). Setting it in Render has no effect until it is added to `src/config/configuration.ts` (see section 8).
+`ORDER_PAYMENT_TIMEOUT_MINUTES` (default `30`): unpaid orders with no payment started are cancelled and restocked after this many minutes. Orders where a payment was started always get 24 hours. Before 13 Nov 2026 this variable was ignored.
 
 ---
 
@@ -155,7 +155,7 @@ curl -s "$API/app/config"          # 200: minimum versions, maintenance, support
 Then, in the admin console:
 
 - **Partner application end to end:** apply in the Delivery app (or with `POST /partner-applications`) using an email you can read → approve in **Delivery Partners** → the toast should say the code was emailed → in the Delivery app use **Set up account or reset password** with that code → sign in → deactivate the test account in **Staff**.
-- Place one marketplace order with Mobile Money or card (cash is refused) and check it shows a delivery window. Pay it, check the payment shows as successful in **Payments** (this proves the webhook works), then cancel it from the app: it should be refunded. If Paystack refuses the refund, the app is told `refund: "PENDING_ADMIN"` but nothing appears in the console (see section 8): refund it by hand in **Payments**.
+- Place one marketplace order with Mobile Money or card (cash is refused) and check it shows a delivery window. Pay it, check the payment shows as successful in **Payments** (this proves the webhook works), then cancel it from the app: it should be refunded. If Paystack refuses the refund, the app is told `refund: "PENDING_ADMIN"`, every admin gets a **Refund needed** notification, and the payment is listed by `GET /admin/payments?needsRefund=true` (the dashboard's `refundsNeeded` counts them): refund it by hand in **Payments**.
 
 ---
 
@@ -194,10 +194,7 @@ From the audit of 13 Nov 2026 (`presentation/` has the full write-up). None bloc
 
 | Issue | Effect | Workaround until fixed |
 | --- | --- | --- |
-| 16 known vulnerabilities in dependencies (`npm audit --omit=dev`: 2 critical, 7 high) | Third-party code with published weaknesses (proxy-addr, tar, multer, body-parser and others) | Run `npm audit fix` and the tests in a separate commit; plan the NestJS major upgrade for the rest |
-| Failed automatic refunds are only logged | A customer who cancels a paid order may not get their money back if Paystack refuses | After deploy, check the Render logs for `automatic refund failed` and refund those in **Payments** |
-| `ORDER_PAYMENT_TIMEOUT_MINUTES` is ignored | Unpaid orders always expire after 30 minutes | None needed unless you want a different timeout |
-| Staff accounts on customer-only routes get a 500 instead of a 403 | Confusing error if a staff login places an order | Use a customer account for test orders |
+| 11 known vulnerabilities left in dependencies (`npm audit --omit=dev`: 0 critical, 5 high, 6 moderate; down from 16 after `npm audit fix` and bcrypt 6) | All sit inside NestJS 10 and what it bundles (body-parser, multer, qs, lodash, file-type) | Plan the NestJS major upgrade and test it against a running server before deploying |
 | Unpaid-order and partner-offline sweeps run inside the web server | They pause while the Render service is asleep (free plan) | Use a plan that doesn't sleep, or accept a delay after wake-up |
 
 ## 9. If something goes wrong

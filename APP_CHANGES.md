@@ -664,6 +664,14 @@ No migration.
 - Returns `{ id, status: "CANCELLED", refund }`, where `refund` is:
   - `NOT_PAID`: nothing was paid.
   - `REFUNDED`: the online payment was refunded through the provider.
-  - `PENDING_ADMIN`: the provider refused the automatic refund. The order stays cancelled and the payment stays `SUCCESSFUL`, so it shows up for an admin to refund from the console.
+  - `PENDING_ADMIN`: the provider refused the automatic refund. The order stays cancelled and the payment stays `SUCCESSFUL`. Every admin gets a `REFUND_NEEDED` notification (`data.orderId`, `data.paymentId`), and the payment is listed by `GET /admin/payments?needsRefund=true`; `GET /admin/dashboard` returns the count as `refundsNeeded`.
 - Errors: 404 for someone else's order; 409 `ORDER_NOT_CANCELLABLE` (already preparing or cancelled) or `ORDER_CHANGED` (it moved on at the same moment).
 - Laundry orders still can't be cancelled in the app.
+
+## Audit fixes (13 Nov 2026)
+
+- **Customer-only routes refuse staff tokens with 403** (`Only customer accounts can use this route`) instead of a 500: `POST/GET /orders`, `GET /orders/:id`, the delivery-window routes, `POST /orders/:id/cancel`, `POST/GET /laundry/orders`, `POST/DELETE /laundry/vendors/:id/reviews`, `POST /payments/initialize`, `GET /payments/verify/:reference`, `GET /payments` and every `/preorders` route. Customer apps are unaffected. `GET /laundry/orders/:id` stays open to laundry staff and admins.
+- **Admin console:** `GET /admin/payments?needsRefund=true` lists successful payments whose order was cancelled (money still owed). It overrides `status`. `GET /admin/dashboard` adds `refundsNeeded`. A new staff notification type, `REFUND_NEEDED`, is sent to every admin when a customer's automatic refund fails.
+- **Refunds:** `POST /payments/:id/refund` now marks the payment `REFUNDED` before calling Paystack and puts it back to `SUCCESSFUL` if Paystack refuses. A second refund of the same payment at the same moment gets a 409 and never reaches Paystack.
+- `ORDER_PAYMENT_TIMEOUT_MINUTES` is now read (default 30).
+

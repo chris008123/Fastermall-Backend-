@@ -136,6 +136,13 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
       } catch (error) {
         this.logger.warn(`Order ${id}: automatic refund failed, left for an admin (${(error as Error).message})`);
         refund = 'PENDING_ADMIN';
+        // Admins are told, and the payment shows in GET /admin/payments?needsRefund=true.
+        this.events.emit('order.refund.failed', {
+          orderId: id,
+          paymentId: order.payment.id,
+          amount: String(order.payment.amount),
+          reason: (error as Error).message,
+        });
       }
     }
 

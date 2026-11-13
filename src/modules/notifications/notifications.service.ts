@@ -295,6 +295,20 @@ export class NotificationsService {
     else if (event.userId) await this.notifyCustomer(event.userId, input);
   }
 
+  // A customer cancelled a paid order and the automatic refund was refused.
+  // Every admin is told so someone refunds it by hand.
+  @OnEvent('order.refund.failed')
+  async onOrderRefundFailed(event: { orderId: string; paymentId: string; amount: string }) {
+    await this.safely(() =>
+      this.broadcast(
+        'ADMIN',
+        'Refund needed',
+        `Order ${shortRef(event.orderId)} was cancelled by the customer but the automatic refund of GH₵ ${Number(event.amount).toFixed(2)} failed. Refund it in Payments.`,
+        { type: 'REFUND_NEEDED', data: { orderId: event.orderId, paymentId: event.paymentId } },
+      ),
+    );
+  }
+
   // ───────── Pre-orders ─────────
 
   // New request: every admin is told so someone quotes it.

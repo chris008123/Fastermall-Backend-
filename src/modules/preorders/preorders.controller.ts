@@ -25,6 +25,7 @@ import {
   UpdateVariantDto,
 } from './dto/preorder.dto';
 import { UploadedImage } from '../marketplace/product-images.service';
+import { CustomerGuard } from '../../shared/guards/customer.guard';
 import { JwtAuthGuard } from '../../shared/guards/jwt-auth.guard';
 import { RolesGuard } from '../../shared/guards/roles.guard';
 import { Roles } from '../../shared/decorators/roles.decorator';
@@ -33,7 +34,7 @@ import { CurrentUser } from '../../shared/decorators/current-user.decorator';
 type Customer = { userId: string; role?: string };
 
 // The signed-in customer's own pre-orders.
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, CustomerGuard)
 @Controller('preorders')
 export class PreOrdersController {
   constructor(private readonly preorders: PreOrdersService) {}

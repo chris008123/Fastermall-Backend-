@@ -17,6 +17,7 @@ import { PaymentsService } from './payments.service';
 import { InitializePaymentDto } from './dto/initialize-payment.dto';
 import { RefundPaymentDto } from './dto/refund-payment.dto';
 import { JwtAuthGuard } from '../../shared/guards/jwt-auth.guard';
+import { CustomerGuard } from '../../shared/guards/customer.guard';
 import { CurrentUser } from '../../shared/decorators/current-user.decorator';
 import { RolesGuard } from '../../shared/guards/roles.guard';
 import { Roles } from '../../shared/decorators/roles.decorator';
@@ -26,20 +27,20 @@ import { StaffRole } from '@prisma/client';
 export class PaymentsController {
   constructor(private readonly paymentsService: PaymentsService) {}
 
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, CustomerGuard)
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @Post('initialize')
   initialize(@CurrentUser() user: { userId: string }, @Body() dto: InitializePaymentDto) {
     return this.paymentsService.initialize(user.userId, dto);
   }
 
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, CustomerGuard)
   @Get('verify/:reference')
   verify(@CurrentUser() user: { userId: string }, @Param('reference') reference: string) {
     return this.paymentsService.verify(user.userId, reference);
   }
 
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, CustomerGuard)
   @Get()
   findMine(@CurrentUser() user: { userId: string }) {
     return this.paymentsService.findMyPayments(user.userId);

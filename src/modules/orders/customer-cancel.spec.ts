@@ -52,9 +52,21 @@ describe('OrdersService.cancelByCustomer', () => {
     expect(payments.refund).toHaveBeenCalledWith('pay1', 'customer:u1', 'Cancelled by the customer');
   });
 
-  it('still cancels when the refund fails, and leaves it for an admin', async () => {
-    const { svc } = setup(order({ payment: { id: 'pay1', status: 'SUCCESSFUL' } }), { refundFails: true });
+  it('still cancels when the refund fails, and tells the admins', async () => {
+    const { svc, events } = setup(order({ payment: { id: 'pay1', status: 'SUCCESSFUL', amount: 45 } }), { refundFails: true });
     await expect(svc.cancelByCustomer('o1', 'u1')).resolves.toMatchObject({ status: 'CANCELLED', refund: 'PENDING_ADMIN' });
+    expect(events.emit).toHaveBeenCalledWith('order.refund.failed', {
+      orderId: 'o1',
+      paymentId: 'pay1',
+      amount: '45',
+      reason: 'Paystack refused',
+    });
+  });
+
+  it('does not raise a refund alert when the refund works', async () => {
+    const { svc, events } = setup(order({ status: 'CONFIRMED', payment: { id: 'pay1', status: 'SUCCESSFUL', amount: 45 } }));
+    await svc.cancelByCustomer('o1', 'u1');
+    expect(events.emit).not.toHaveBeenCalledWith('order.refund.failed', expect.anything());
   });
 
   it('refuses once the order is being prepared, and someone else’s order', async () => {

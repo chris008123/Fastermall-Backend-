@@ -4,6 +4,7 @@ import { LaundryService } from './laundry.service';
 import { CreateLaundryOrderDto } from './dto/create-laundry-order.dto';
 import { UpdateLaundryStatusDto } from './dto/update-laundry-status.dto';
 import { JwtAuthGuard } from '../../shared/guards/jwt-auth.guard';
+import { CustomerGuard } from '../../shared/guards/customer.guard';
 import { RolesGuard } from '../../shared/guards/roles.guard';
 import { Roles } from '../../shared/decorators/roles.decorator';
 import { CurrentUser } from '../../shared/decorators/current-user.decorator';
@@ -34,6 +35,7 @@ export class LaundryController {
     return this.laundryService.staffOrders(user, { status, vendorId });
   }
 
+  @UseGuards(CustomerGuard)
   @Post('orders')
   create(
     @CurrentUser() user: { userId: string },
@@ -47,6 +49,7 @@ export class LaundryController {
     );
   }
 
+  @UseGuards(CustomerGuard)
   @Get('orders')
   findMine(@CurrentUser() user: { userId: string }) {
     return this.laundryService.findMyOrders(user.userId);

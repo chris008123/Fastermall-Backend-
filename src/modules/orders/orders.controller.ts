@@ -4,6 +4,7 @@ import { OrdersService } from './orders.service';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { UpdateOrderStatusDto } from './dto/update-order-status.dto';
 import { RescheduleDeliveryDto } from './dto/reschedule-delivery.dto';
+import { CustomerGuard } from '../../shared/guards/customer.guard';
 import { JwtAuthGuard } from '../../shared/guards/jwt-auth.guard';
 import { RolesGuard } from '../../shared/guards/roles.guard';
 import { Roles } from '../../shared/decorators/roles.decorator';
@@ -15,6 +16,7 @@ import { StaffRole } from '@prisma/client';
 export class OrdersController {
   constructor(private readonly ordersService: OrdersService) {}
 
+  @UseGuards(CustomerGuard)
   @Post()
   create(
     @CurrentUser() user: { userId: string },
@@ -28,12 +30,14 @@ export class OrdersController {
     );
   }
 
+  @UseGuards(CustomerGuard)
   @Get()
   findMine(@CurrentUser() user: { userId: string }) {
     return this.ordersService.findMyOrders(user.userId);
   }
 
   // The order's delivery window and the windows it may be moved to.
+  @UseGuards(CustomerGuard)
   @Get(':id/delivery-windows')
   deliveryWindows(
     @CurrentUser() user: { userId: string },
@@ -43,6 +47,7 @@ export class OrdersController {
   }
 
   // Body: { windowStart } from one of the options above.
+  @UseGuards(CustomerGuard)
   @Patch(':id/delivery-window')
   rescheduleDelivery(
     @CurrentUser() user: { userId: string },
@@ -53,11 +58,13 @@ export class OrdersController {
   }
 
   // The customer cancels their own order before it is being prepared.
+  @UseGuards(CustomerGuard)
   @Post(':id/cancel')
   cancel(@CurrentUser() user: { userId: string }, @Param('id') id: string) {
     return this.ordersService.cancelByCustomer(id, user.userId);
   }
 
+  @UseGuards(CustomerGuard)
   @Get(':id')
   findOne(
     @CurrentUser() user: { userId: string },

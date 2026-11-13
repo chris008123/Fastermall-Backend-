@@ -1,5 +1,5 @@
-import { Type } from 'class-transformer';
-import { IsInt, IsOptional, IsString, Matches, Min } from 'class-validator';
+import { Transform, Type } from 'class-transformer';
+import { IsBoolean, IsInt, IsOptional, IsString, Matches, Min } from 'class-validator';
 
 // Query string shared by the admin list endpoints. `status` and `type` are
 // checked against the right enum in AdminService, because each list has its
@@ -31,4 +31,11 @@ export class AdminListQueryDto {
   @IsOptional()
   @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: 'deliveryDate must look like 2026-11-08' })
   deliveryDate?: string;
+
+  // Payments: only SUCCESSFUL payments whose order or laundry order is
+  // CANCELLED, i.e. money that still has to go back to the customer.
+  @IsOptional()
+  @Transform(({ value }) => (value === 'true' ? true : value === 'false' ? false : value))
+  @IsBoolean({ message: 'needsRefund must be true or false' })
+  needsRefund?: boolean;
 }

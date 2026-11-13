@@ -32,4 +32,17 @@ describe('pre-order notifications', () => {
     await svc.onPreOrderDecided({ requestId: 'r1', status: 'ACCEPTED' });
     expect(prisma.notification.createMany.mock.calls[0][0].data[0]).toMatchObject({ title: 'Pre-order accepted', type: 'PREORDER_ACCEPTED' });
   });
+
+  it('every admin is told when an automatic refund after a cancel fails', async () => {
+    const { svc, prisma } = setup();
+    await svc.onOrderRefundFailed({ orderId: 'abcdef12-0000', paymentId: 'pay1', amount: '45.5' });
+    expect(prisma.staffUser.findMany.mock.calls[0][0].where).toEqual({ isActive: true, role: 'ADMIN' });
+    expect(prisma.notification.createMany.mock.calls[0][0].data[0]).toMatchObject({
+      staffUserId: 'a1',
+      title: 'Refund needed',
+      type: 'REFUND_NEEDED',
+      body: expect.stringContaining('GH₵ 45.50'),
+      data: { orderId: 'abcdef12-0000', paymentId: 'pay1' },
+    });
+  });
 });

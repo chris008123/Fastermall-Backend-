@@ -23,30 +23,43 @@ super app, matching the architecture doc. Built with **NestJS + TypeScript**,
 
 ```
 src/
-  main.ts              # bootstrap, global pipes/filters/interceptors
-  app.module.ts         # wires every domain module together
-  config/                # environment configuration
-  database/              # PrismaService + PrismaModule (the Data Layer)
-  shared/                 # cross-cutting: guards, filters, decorators (Shared Components)
+  main.ts            # bootstrap: validation, error format, CORS, security headers
+  app.module.ts      # wires every module together; global rate limit and audit log
+  config/            # environment configuration and start-up checks
+  database/          # PrismaService (the only way modules reach the database)
+  shared/            # guards, interceptors, filters, email, storage, small utilities
   modules/
-    identity/             # ✅ fully implemented: register, login, JWT, /me
-    marketplace/           # stubbed — same pattern, fill in business logic
-    food/                   # stubbed
-    laundry/                 # stubbed
-    orders/                   # stubbed
-    logistics/                 # stubbed
-    payments/                   # stubbed
-    notifications/                # stubbed
-    support/                       # stubbed
-    admin/                          # stubbed
+    identity/              # customer sign-up, email codes, login, Google sign-in, /me
+    staff/                 # staff logins, sessions, password resets, deactivation
+    partner-applications/  # delivery partner applications and approval
+    addresses/             # customers' saved addresses
+    marketplace/           # products, categories, photos, reviews
+    food/                  # food vendors, menus, option groups and add-ons
+    orders/                # checkout, stock, delivery windows, cancelling, unpaid expiry
+    preorders/             # custom design requests and quotes
+    laundry/               # laundry vendors, price lists, 13-stage orders, ratings
+    logistics/             # delivery jobs, handover codes, wallet, payouts, documents
+    payments/              # Paystack checkout, webhook, verification, refunds
+    notifications/         # in-app notifications, Expo push, broadcasts
+    support/               # support tickets and replies
+    promotions/            # scheduled in-app promotions
+    faq/                   # FAQ
+    admin/                 # dashboard, cross-customer lists, audit log
+    settings/              # platform settings (fees, maintenance, WhatsApp)
+    app-config/            # minimum app versions and support contacts
 prisma/
-  schema.prisma           # all domain models in one schema (the ERD, as code)
+  schema.prisma      # every table, in one file
+  migrations/        # dated, additive database changes
+  seed.ts            # demo catalog and starter FAQs (SEED_ONLY=faqs for FAQs only)
+presentation/        # plain-English deck and diagrams explaining the backend, with an audit
 ```
 
-Every stubbed module follows the same shape as `identity`:
-`<name>.module.ts`, `<name>.controller.ts`, `<name>.service.ts`. Build them out the
-same way — DTOs go in a `dto/` folder, controllers stay thin, business rules live
-in the service, and the service talks to the database only through `PrismaService`.
+Every module has the same shape: `<name>.module.ts`, `<name>.controller.ts`
+(the routes, kept thin), `<name>.service.ts` (the business rules), DTOs in
+`dto/` and tests in `*.spec.ts`. Services talk to the database only through
+`PrismaService`. Modules tell each other about changes through events
+(`@nestjs/event-emitter`, e.g. `order.created`, `payment.successful`) rather
+than calling each other directly.
 
 ## Setup
 
@@ -61,49 +74,35 @@ in the service, and the service talks to the database only through `PrismaServic
    ```bash
    npm install
    ```
-5. Push the schema to Supabase and generate the Prisma client:
+5. Create the tables and generate the Prisma client:
    ```bash
-   npx prisma migrate dev --name init
+   npx prisma migrate deploy
+   npx prisma generate
    ```
-   This creates all the tables (`users`, `products`, `orders`, `laundry_orders`,
-   `deliveries`, `payments`, etc.) in your Supabase database.
-6. Run the server:
+6. Optionally add demo data and the starter FAQs:
+   ```bash
+   npx prisma db seed
+   ```
+7. Run the server:
    ```bash
    npm run start:dev
    ```
-7. Test the auth flow:
+8. Test the auth flow:
    ```bash
-   curl -X POST http://localhost:3000/api/v1/auth/register \
-     -H "Content-Type: application/json" \
-     -d '{"email":"you@example.com","password":"password123","fullName":"Test User"}'
+   curl -X POST http://localhost:3000/api/v1/auth/register      -H "Content-Type: application/json"      -d '{"email":"you@example.com","password":"password123","fullName":"Test User"}'
    ```
-   You should get back `{ success: true, data: { accessToken, user } }`.
-   Use that token as `Authorization: Bearer <token>` to call `GET /api/v1/auth/me`
-   or any of the stubbed module endpoints.
+   A verification code is emailed (SMTP settings needed); confirm it with
+   `POST /api/v1/auth/verify-otp`, then use the returned token as
+   `Authorization: Bearer <token>`.
 
-## What's real vs. stubbed right now
+Run the tests with `npm test`. Deploying to production: see `DEPLOYMENT.md`.
 
-- **Identity module**: fully working — register, login (bcrypt + JWT), `/me`,
-  `JwtAuthGuard` + `RolesGuard` for protecting routes by role.
-- **Every other module**: has a working `GET /api/v1/<module>` route behind auth,
-  and a service wired to `PrismaService`, but no real business logic yet. This is
-  intentional — it's a consistent starting shape so you (or anyone joining) can build
-  out marketplace, food, laundry, logistics, payments, etc. following the same pattern
-  instead of inventing structure each time.
+## What's built
 
-## Next steps, roughly in the order the doc's workflows suggest
-
-1. Flesh out **Marketplace** (products/categories CRUD) — it's the simplest domain
-   and a good way to get comfortable with the Prisma models.
-2. Build **Orders** (create order from marketplace or food, calculate total).
-3. Build **Payments** (start with a mock/manual "mark as paid" before wiring a real
-   mobile money provider).
-4. Build **Logistics** (delivery assignment: walking vs. motorcycle based on distance).
-5. Build **Laundry** (the pickup → wash → deliver status pipeline from the doc).
-6. Wire the **Domain Event Bus**: `@nestjs/event-emitter` is already installed and
-   registered in `app.module.ts`. Use `this.eventEmitter.emit('order.created', order)`
-   in Orders, and listen for it in Payments/Logistics/Notifications instead of
-   calling those services directly — this is the loose coupling the doc describes.
+Every module above is fully implemented and tested (`npm test`). The API
+contracts for the app teams are in `APP_CHANGES.md`, what was built and why in
+`BACKEND_WORK_LOG.md`, and a non-technical overview with an audit in
+`presentation/`.
 
 ## Notes for your co-founder (frontend/Expo)
 

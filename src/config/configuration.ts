@@ -1,3 +1,8 @@
+function positiveInt(raw: string | undefined, fallback: number): number {
+  const n = parseInt(raw ?? '', 10);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
 export default () => ({
   port: parseInt(process.env.PORT || '3000', 10),
   productImages: {
@@ -56,6 +61,9 @@ export default () => ({
   orders: {
     // Flat delivery fee added to marketplace orders (GHS). Set to 0 for free delivery.
     marketplaceDeliveryFee: parseFloat(process.env.MARKETPLACE_DELIVERY_FEE ?? '5'),
+    // Unpaid orders with no payment started are cancelled (and restocked)
+    // after this many minutes. Invalid or non-positive values fall back to 30.
+    paymentTimeoutMinutes: positiveInt(process.env.ORDER_PAYMENT_TIMEOUT_MINUTES, 30),
   },
   payments: {
     // 'paystack' (default) or 'mock' (local dev only — refused in production)

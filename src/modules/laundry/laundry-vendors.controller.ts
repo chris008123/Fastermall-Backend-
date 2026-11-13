@@ -12,6 +12,7 @@ import {
   UpdateLaundryVendorDto,
   UpsertLaundryReviewDto,
 } from './dto/laundry-vendor.dto';
+import { CustomerGuard } from '../../shared/guards/customer.guard';
 import { JwtAuthGuard } from '../../shared/guards/jwt-auth.guard';
 import { RolesGuard } from '../../shared/guards/roles.guard';
 import { Roles } from '../../shared/decorators/roles.decorator';
@@ -44,11 +45,13 @@ export class LaundryVendorsController {
     return this.vendors.listReviews(id, q.page, q.pageSize);
   }
 
+  @UseGuards(CustomerGuard)
   @Post(':id/reviews')
   review(@Param('id') id: string, @CurrentUser() user: { userId: string }, @Body() dto: UpsertLaundryReviewDto) {
     return this.vendors.upsertReview(id, user.userId, dto);
   }
 
+  @UseGuards(CustomerGuard)
   @Delete(':id/reviews/me')
   removeReview(@Param('id') id: string, @CurrentUser() user: { userId: string }) {
     return this.vendors.removeMyReview(id, user.userId);

@@ -19,6 +19,14 @@ import { AdminListQueryDto } from './dto/admin-list-query.dto';
 const cashOutTotal = (sum: { amountPesewas: number | null; feePesewas: number | null } | null | undefined) =>
   new Prisma.Decimal((sum?.amountPesewas ?? 0) + (sum?.feePesewas ?? 0)).dividedBy(100);
 
+// Money still owed back: the customer cancelled (or an admin cancelled) an
+// order that was paid, and the refund hasn't gone through. Laundry orders
+// can't be cancelled, so only orders are checked.
+const NEEDS_REFUND: Prisma.PaymentWhereInput = {
+  status: 'SUCCESSFUL',
+  order: { is: { status: 'CANCELLED' } },
+};
+
 const DEFAULT_PAGE_SIZE = 20;
 const MAX_PAGE_SIZE = 100;
 
@@ -99,7 +107,7 @@ export class AdminService {
     const since30 = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
     // First day of the month, five months back: six months including this one.
     const since6m = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 5, 1));
-    const [users, products, orders, laundryOrders, openTickets, pendingPayments, total, last30, refunded, monthly] =
+    const [users, products, orders, laundryOrders, openTickets, pendingPayments, refundsNeeded, total, last30, refunded, monthly] =
       await Promise.all([
         this.prisma.user.count(),
         this.prisma.product.count(),
@@ -107,6 +115,7 @@ export class AdminService {
         this.prisma.laundryOrder.count(),
         this.prisma.supportTicket.count({ where: { status: 'OPEN' } }),
         this.prisma.payment.count({ where: { status: 'PENDING' } }),
+        this.prisma.payment.count({ where: NEEDS_REFUND }),
         this.prisma.payment.aggregate({ where: { status: 'SUCCESSFUL' }, _sum: { amount: true } }),
         this.prisma.payment.aggregate({ where: { status: 'SUCCESSFUL', paidAt: { gte: since30 } }, _sum: { amount: true } }),
         this.prisma.payment.aggregate({ where: { status: 'REFUNDED' }, _sum: { amount: true } }),
@@ -134,6 +143,8 @@ export class AdminService {
       laundryOrders,
       openTickets,
       pendingPayments,
+      // Paid orders that were cancelled but not refunded yet (see listPayments).
+      refundsNeeded,
       revenueTotal: (total._sum.amount ?? new Prisma.Decimal(0)).toString(),
       revenueLast30Days: (last30._sum.amount ?? new Prisma.Decimal(0)).toString(),
       refundedTotal: (refunded._sum.amount ?? new Prisma.Decimal(0)).toString(),
@@ -267,9 +278,9 @@ export class AdminService {
   }
 
   listPayments(query: AdminListQueryDto) {
-    const where: Prisma.PaymentWhereInput = {
-      status: enumFilter(query.status, PaymentStatus, 'status'),
-    };
+    const where: Prisma.PaymentWhereInput = query.needsRefund
+      ? NEEDS_REFUND
+      : { status: enumFilter(query.status, PaymentStatus, 'status') };
     return this.paged(
       query,
       () => this.prisma.payment.count({ where }),

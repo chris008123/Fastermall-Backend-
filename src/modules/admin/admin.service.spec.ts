@@ -82,6 +82,18 @@ describe('AdminService lists', () => {
     expect(() => svc.listPayments({ status: 'PAID' })).toThrow(BadRequestException);
   });
 
+  it('needsRefund lists paid payments whose order was cancelled', async () => {
+    const { svc, prisma } = setup();
+    await svc.listPayments({ needsRefund: true, status: 'PENDING' });
+    // needsRefund wins over status: it already means SUCCESSFUL.
+    expect(prisma.payment.findMany.mock.calls[0][0].where).toEqual({
+      status: 'SUCCESSFUL',
+      order: { is: { status: 'CANCELLED' } },
+    });
+    await svc.listPayments({ needsRefund: false });
+    expect(prisma.payment.findMany.mock.calls[1][0].where).toEqual({ status: undefined });
+  });
+
   it('an empty filter means no filter', async () => {
     const { svc, prisma } = setup();
     await svc.listPayments({ status: '' });
@@ -220,6 +232,15 @@ describe('AdminService.dashboardStats revenue', () => {
     ]);
     expect(prisma.payment.aggregate.mock.calls[0][0].where).toEqual({ status: 'SUCCESSFUL' });
     expect(prisma.payment.aggregate.mock.calls[2][0].where).toEqual({ status: 'REFUNDED' });
+  });
+
+  it('counts paid orders that were cancelled but not refunded', async () => {
+    const { svc, prisma } = setup();
+    prisma.payment.aggregate = jest.fn().mockResolvedValue({ _sum: { amount: null } });
+    prisma.$queryRaw = jest.fn().mockResolvedValue([]);
+    prisma.payment.count = jest.fn().mockImplementation(({ where }) => Promise.resolve(where.order ? 2 : 5));
+    const res = await svc.dashboardStats(new Date('2026-11-04T12:00:00Z'));
+    expect(res).toMatchObject({ pendingPayments: 5, refundsNeeded: 2 });
   });
 });
 

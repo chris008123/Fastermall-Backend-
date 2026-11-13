@@ -211,18 +211,33 @@ export class PaymentsService {
     }
 
     const online = payment.method !== 'CASH' && payment.provider !== 'cash';
-    let providerRefund: string | null = null;
-    if (online) {
-      if (!payment.reference) throw new BadRequestException('This payment has no provider reference to refund');
-      const result = await this.provider.refund(payment.reference, reason);
-      providerRefund = result.refundReference ?? result.status;
+    if (online && !payment.reference) {
+      throw new BadRequestException('This payment has no provider reference to refund');
     }
 
+    // Claim the refund first, so two admins (or an admin and a customer
+    // cancelling) can't both send it to the provider. If the provider then
+    // refuses, the payment goes back to SUCCESSFUL.
     const flipped = await this.prisma.payment.updateMany({
       where: { id: payment.id, status: 'SUCCESSFUL' },
       data: { status: 'REFUNDED' },
     });
     if (flipped.count !== 1) throw new ConflictException('This payment was just updated by someone else');
+
+    let providerRefund: string | null = null;
+    if (online) {
+      try {
+        const result = await this.provider.refund(payment.reference as string, reason);
+        providerRefund = result.refundReference ?? result.status;
+      } catch (error) {
+        await this.prisma.payment
+          .updateMany({ where: { id: payment.id, status: 'REFUNDED' }, data: { status: 'SUCCESSFUL' } })
+          .catch((e) =>
+            this.logger.error(`Payment ${payment.id}: could not undo the refund claim: ${(e as Error).message}`),
+          );
+        throw error;
+      }
+    }
 
     const fresh = await this.prisma.payment.findUnique({ where: { id: payment.id } });
     this.events.emit('payment.refunded', { ...fresh, refundedBy: staffId, reason: reason ?? null, providerRefund });
