@@ -10,6 +10,7 @@ import { Prisma } from '@prisma/client';
 import { randomUUID } from 'crypto';
 import { PrismaService } from '../../database/prisma.service';
 import { StorageService } from '../../shared/storage/storage.service';
+import { toWebpWithThumbnail } from '../../shared/images/image-processing';
 
 /** The parts of a multer file we use (memory storage). */
 export interface UploadedImage {
@@ -48,18 +49,26 @@ export function sniffImageType(buffer: Buffer): ImageType | null {
   return null;
 }
 
+/** Both stored files of a photo (older photos have no thumbnail). */
+const filesOf = (image: { path: string; thumbnailPath: string | null }) =>
+  image.thumbnailPath ? [image.path, image.thumbnailPath] : [image.path];
+
 const IMAGE_SELECT = {
   id: true,
   url: true,
   sortOrder: true,
+  thumbnailUrl: true,
+  width: true,
+  height: true,
   contentType: true,
   sizeBytes: true,
   createdAt: true,
 } satisfies Prisma.ProductImageSelect;
 
 /**
- * Product photos (requirement 2.2). Admins upload them; they are stored in a
- * public Supabase bucket and shown in the marketplace. A product has up to
+ * Product photos (requirement 2.2). Admins upload JPEG, PNG or WebP; each is
+ * converted to WebP (max 1600 px, hidden metadata removed) with a 400 px
+ * thumbnail, stored in a public Supabase bucket and shown in the marketplace. A product has up to
  * PRODUCT_IMAGES_MAX photos (default 5); the first one is also written to
  * Product.imageUrl so older apps keep showing it.
  */
@@ -120,7 +129,7 @@ export class ProductImagesService {
           code: 'UNSUPPORTED_IMAGE_TYPE',
         });
       }
-      return { file, type };
+      return { file };
     });
 
     const existing = await this.prisma.productImage.count({ where: { productId } });
@@ -131,13 +140,40 @@ export class ProductImagesService {
       });
     }
 
-    // Upload first; only record the ones that made it, and clean up on failure.
-    const uploaded: { path: string; publicUrl: string; type: ImageType; size: number }[] = [];
+    // Convert every photo before uploading any, so a broken file stops the
+    // whole batch before anything reaches storage.
+    const converted = [];
+    for (const { file } of checked) converted.push(await toWebpWithThumbnail(file.buffer));
+
+    // Upload; only record the ones that made it, and clean up on failure.
+    const uploaded: {
+      path: string;
+      publicUrl: string;
+      thumbnailPath: string;
+      thumbnailUrl: string;
+      size: number;
+      width: number;
+      height: number;
+    }[] = [];
+    const stored: string[] = [];
     try {
-      for (const { file, type } of checked) {
-        const path = `products/${productId}/${randomUUID()}.${IMAGE_TYPES[type]}`;
-        const { publicUrl } = await this.storage.uploadPublic(this.bucket, path, file.buffer, type);
-        uploaded.push({ path, publicUrl, type, size: file.buffer.length });
+      for (const { main, thumb } of converted) {
+        const base = `products/${productId}/${randomUUID()}`;
+        const path = `${base}.webp`;
+        const thumbnailPath = `${base}-thumb.webp`;
+        const { publicUrl } = await this.storage.uploadPublic(this.bucket, path, main.buffer, main.contentType);
+        stored.push(path);
+        const thumbUpload = await this.storage.uploadPublic(this.bucket, thumbnailPath, thumb.buffer, thumb.contentType);
+        stored.push(thumbnailPath);
+        uploaded.push({
+          path,
+          publicUrl,
+          thumbnailPath,
+          thumbnailUrl: thumbUpload.publicUrl,
+          size: main.buffer.length,
+          width: main.width,
+          height: main.height,
+        });
       }
 
       const last = await this.prisma.productImage.aggregate({
@@ -152,14 +188,18 @@ export class ProductImagesService {
             productId,
             url: u.publicUrl,
             path: u.path,
-            contentType: u.type,
+            contentType: 'image/webp',
             sizeBytes: u.size,
+            width: u.width,
+            height: u.height,
+            thumbnailUrl: u.thumbnailUrl,
+            thumbnailPath: u.thumbnailPath,
             sortOrder: start + i,
           })),
         }),
       ]);
     } catch (error) {
-      await this.storage.removeFromBucket(this.bucket, uploaded.map((u) => u.path));
+      await this.storage.removeFromBucket(this.bucket, stored);
       throw error;
     }
 
@@ -170,12 +210,12 @@ export class ProductImagesService {
   async remove(productId: string, imageId: string) {
     const image = await this.prisma.productImage.findFirst({
       where: { id: imageId, productId },
-      select: { id: true, path: true },
+      select: { id: true, path: true, thumbnailPath: true },
     });
     if (!image) throw new NotFoundException('Image not found');
 
     await this.prisma.productImage.delete({ where: { id: image.id } });
-    await this.storage.removeFromBucket(this.bucket, [image.path]);
+    await this.storage.removeFromBucket(this.bucket, filesOf(image));
     return this.syncPrimary(productId);
   }
 
@@ -202,8 +242,11 @@ export class ProductImagesService {
 
   /** Storage paths of a product's photos (read before deleting the product). */
   async pathsOf(productId: string) {
-    const images = await this.prisma.productImage.findMany({ where: { productId }, select: { path: true } });
-    return images.map((i) => i.path);
+    const images = await this.prisma.productImage.findMany({
+      where: { productId },
+      select: { path: true, thumbnailPath: true },
+    });
+    return images.flatMap(filesOf);
   }
 
   /** Best effort: removes files whose rows are already gone. */
@@ -212,19 +255,21 @@ export class ProductImagesService {
   }
 
   /**
-   * Writes the first photo's URL to Product.imageUrl. With no photos left it
-   * becomes null, except a URL set by hand from elsewhere (not this bucket),
-   * which is kept until the first upload replaces it.
+   * Writes the first photo's URL to Product.imageUrl (and its thumbnail to
+   * Product.thumbnailUrl). With no photos left imageUrl becomes null, except
+   * a URL set by hand from elsewhere (not this bucket), which is kept until
+   * the first upload replaces it.
    */
   private async syncPrimary(productId: string) {
     const images = await this.list(productId);
+    const thumbnailUrl: string | null = images[0]?.thumbnailUrl ?? null;
     let imageUrl: string | null = images[0]?.url ?? null;
     if (!imageUrl) {
       const product = await this.prisma.product.findUnique({ where: { id: productId }, select: { imageUrl: true } });
       const external = product?.imageUrl && !product.imageUrl.includes(`/${this.bucket}/`);
       imageUrl = external ? product!.imageUrl : null;
     }
-    await this.prisma.product.update({ where: { id: productId }, data: { imageUrl } });
-    return { productId, imageUrl, images };
+    await this.prisma.product.update({ where: { id: productId }, data: { imageUrl, thumbnailUrl } });
+    return { productId, imageUrl, thumbnailUrl, images };
   }
 }

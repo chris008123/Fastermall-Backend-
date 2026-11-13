@@ -87,7 +87,8 @@ Each feature is planned as its own branch, merged into `main`, following the exi
 - [x] Admin: upload (`multipart`, field `images`), reorder, delete. Type is checked from the bytes (JPEG/PNG/WebP). Up to 5 MB each and 5 per product (env-configurable). All-or-nothing: earlier files are cleaned up if a later upload fails. Deleting a product removes its files.
 - [x] Product responses include `images`, plus a public `GET /marketplace/products/:id/images`.
 - [x] Verified: unit tests; migration on a throwaway Postgres with no drift; HTTP checks of every refusal (401, 400 type, 413 size, 400 no file, 404) and of a valid image reaching storage. **Not verified:** a real upload to Supabase, because I didn't touch the production project. Try one upload after deploy.
-- [ ] Not done (pending decisions): cropping/resizing (the admin uploads ready-made images), and food vendor/menu images (the same service can be reused).
+- [x] 13 Nov 2026: uploads are converted to WebP, capped at 1600 px, turned upright, with GPS and other metadata removed; a 400 px thumbnail is stored too (`src/shared/images/image-processing.ts`, using `sharp`). Promotion images get the same conversion without a thumbnail. Migration `20261113120000_product_image_thumbnails` (nullable columns). Photos uploaded earlier are left as they are (no thumbnail).
+- [ ] Not done: cropping, and food vendor/menu images (the same service can be reused).
 
 ### 2.1 Promotions `[x]`
 - [x] `Promotion` model with content, button (`ctaType` PRODUCT/CATEGORY/VENDOR/FOOD_VENDOR/URL/NONE), `theme` (colours and animation preset, including `float3d`), schedule, priority, popup `frequency` and `announcedAt`. Migration `20261110230000_add_promotions`.
@@ -183,3 +184,5 @@ After each step: `npm test`, `npm run build`, then update this log, `README.md` 
 | 11 Nov 2026 | 2.12A Custom food orders | Built on `main`. 646 tests pass. Migration/HTTP check on the throwaway DB not done: it was stopped for low memory. |
 | 11 Nov 2026 | 2.12B Pre-orders | Built on `main`. 665 tests pass. Payment for accepted quotes is pending a decision. |
 | 11 Nov 2026 | 2.15 Laundry multivendor | Built on `main`. 682 tests pass. Commission/payouts pending a decision. All 10 planned backend steps are now built. |
+| 13 Nov 2026 | Audit fixes | Refund claim before Paystack, admin alert and `needsRefund` list for failed refunds, `CustomerGuard` (403 for staff on customer routes), `ORDER_PAYMENT_TIMEOUT_MINUTES` read, `npm audit fix` + bcrypt 6 (16 -> 11 vulnerabilities, none critical). 732 tests pass. |
+| 13 Nov 2026 | Image conversion | Admin product and promotion uploads converted to WebP (max 1600 px, metadata removed) with 400 px product thumbnails. All 40 migrations verified on a throwaway Postgres (empty and with pre-multivendor laundry data): no drift, laundry data moved as intended. Server booted against it; upload, 403 and refund-list routes checked over HTTP. 743 tests pass. |

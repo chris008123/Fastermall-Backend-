@@ -34,7 +34,7 @@ Production API: `https://fastermall-super-app-backend.onrender.com/api/v1`
    npm ci && npx prisma generate && npm test && npm run build
    ```
    On 13 Nov 2026 (`c26445c`): 708/708 tests pass and the build is clean.
-5. **Try the new migrations on a copy first.** `20261111000000_add_menu_item_options`, `20261111030000_add_pre_orders` and `20261111060000_laundry_multivendor` have only been checked by unit tests, never against a real Postgres (see `BACKEND_WORK_LOG.md`). Restore the backup into a spare Supabase project or a local Postgres, point `DATABASE_URL` / `DIRECT_URL` at it, and run `npx prisma migrate deploy` there. Then run `npx prisma migrate diff --from-url "$DIRECT_URL" --to-schema-datamodel prisma/schema.prisma --exit-code`, which should report no difference.
+5. **Try the new migrations on a copy first.** On 13 Nov 2026 all 40 migrations were applied to a throwaway Postgres: from empty, and on top of a database holding pre-multivendor laundry data (its catalog and orders moved onto `fastermall-laundry` as intended). Both ended with no drift from `schema.prisma`. That doesn't replace a run against a copy of *your* data: restore the backup into a spare Supabase project or a local Postgres, point `DATABASE_URL` / `DIRECT_URL` at it, and run `npx prisma migrate deploy` there. Then run `npx prisma migrate diff --from-url "$DIRECT_URL" --to-schema-datamodel prisma/schema.prisma --exit-code`, which should report no difference.
 
 ---
 
@@ -77,7 +77,7 @@ Production API: `https://fastermall-super-app-backend.onrender.com/api/v1`
 | `PARTNER_REQUIRE_VERIFICATION` | `false` | ★ Turn on once partners have uploaded documents (the Delivery app now uploads them for real). Then only partners with approved documents can accept jobs. |
 | `PARTNER_AUTO_OFFLINE` / `PARTNER_OFFLINE_AFTER_SECONDS` | `false` / `180` | Leave off: live location was removed |
 | `DOCUMENTS_BUCKET` / `DOCUMENT_MAX_BYTES` | `partner-documents` / 5 MB | Private bucket |
-| ★ `PRODUCT_IMAGES_BUCKET` / `PRODUCT_IMAGE_MAX_BYTES` / `PRODUCT_IMAGES_MAX` | `product-images` / 5 MB / `5` | Public bucket |
+| ★ `PRODUCT_IMAGES_BUCKET` / `PRODUCT_IMAGE_MAX_BYTES` / `PRODUCT_IMAGES_MAX` | `product-images` / 5 MB / `5` | Public bucket. Uploads are converted to WebP (max 1600 px) with a 400 px thumbnail; the size limit applies to the file the admin uploads |
 | ★ `PROMOTION_IMAGES_BUCKET` | `promotion-images` | Public bucket |
 | ★ `PREORDER_IMAGES_BUCKET` / `PREORDER_IMAGES_MAX` | `preorder-references` / `5` | Private bucket |
 | `APP_MIN_VERSION_PARTNER`, `APP_MIN_VERSION_CUSTOMER`, `APP_UPDATE_URL_PARTNER`, `APP_UPDATE_URL_CUSTOMER` | | Force-update prompt in the apps (see section 7) |
@@ -112,6 +112,7 @@ Migrations added in this release, all additive (new tables, nullable or defaulte
 | `20261111030000_add_pre_orders` | Pre-orders, designs (variants), reference images |
 | `20261111060000_laundry_multivendor` | Laundry vendors + reviews; creates **Fastermall Laundry** (`fastermall-laundry`) and moves existing catalog and orders onto it |
 | `20261112090000_add_partner_applications` | Partner applications table + enum |
+| `20261113120000_product_image_thumbnails` | Thumbnail, width and height on product photos; thumbnail on products (nullable columns) |
 
 Check afterwards: `npx prisma migrate status` should say *Database schema is up to date*.
 

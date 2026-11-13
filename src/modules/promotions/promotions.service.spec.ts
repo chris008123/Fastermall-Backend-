@@ -8,7 +8,13 @@ import { CreatePromotionDto } from './dto/promotion.dto';
 import { ROLES_KEY } from '../../shared/decorators/roles.decorator';
 
 const NOW = new Date('2026-11-10T12:00:00Z');
-const JPEG = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0, 0x10]);
+import sharp = require('sharp');
+
+// A real 2400 x 1200 JPEG, made once: uploads are now converted.
+let JPEG: Buffer;
+beforeAll(async () => {
+  JPEG = await sharp({ create: { width: 2400, height: 1200, channels: 3, background: '#e07b2a' } }).jpeg().toBuffer();
+});
 
 function setup(row: any = null) {
   const prisma: any = {
@@ -140,11 +146,14 @@ describe('creating and editing', () => {
 });
 
 describe('popup image', () => {
-  it('uploads a real image to the public bucket and replaces the old file', async () => {
+  it('stores the image as WebP (max 1600 px) and replaces the old file', async () => {
     const { svc, storage, prisma } = setup(promo({ imagePath: 'promotions/pr1/old.jpg' }));
     await svc.setImage('pr1', { buffer: JPEG, size: JPEG.length });
-    expect(storage.uploadPublic.mock.calls[0][0]).toBe('promotion-images');
-    expect(storage.uploadPublic.mock.calls[0][1]).toMatch(/^promotions\/pr1\/[0-9a-f-]{36}\.jpg$/);
+    const [bucket, path, body, type] = storage.uploadPublic.mock.calls[0];
+    expect(bucket).toBe('promotion-images');
+    expect(path).toMatch(/^promotions\/pr1\/[0-9a-f-]{36}\.webp$/);
+    expect(type).toBe('image/webp');
+    expect(await sharp(body).metadata()).toMatchObject({ format: 'webp', width: 1600, height: 800 });
     expect(prisma.promotion.update.mock.calls[0][0].data.imageUrl).toMatch(/^https:\/\/x\/promotion-images\//);
     expect(storage.removeFromBucket).toHaveBeenCalledWith('promotion-images', ['promotions/pr1/old.jpg']);
   });

@@ -5,7 +5,8 @@ import { randomUUID } from 'crypto';
 import { PrismaService } from '../../database/prisma.service';
 import { StorageService } from '../../shared/storage/storage.service';
 import { NotificationsService } from '../notifications/notifications.service';
-import { IMAGE_TYPES, sniffImageType, UploadedImage } from '../marketplace/product-images.service';
+import { sniffImageType, UploadedImage } from '../marketplace/product-images.service';
+import { toMainWebp } from '../../shared/images/image-processing';
 import { CreatePromotionDto, PromotionStatus, UpdatePromotionDto } from './dto/promotion.dto';
 
 // Live promotions the app gets at most (the popup shows the first; the rest
@@ -192,7 +193,7 @@ export class PromotionsService {
     return { deleted: true };
   }
 
-  /** Uploads (or replaces) the popup image. JPEG, PNG or WebP. */
+  /** Uploads (or replaces) the popup image. JPEG, PNG or WebP in; stored as WebP, max 1600 px. */
   async setImage(id: string, file: UploadedImage | undefined) {
     const current = await this.prisma.promotion.findUnique({ where: { id }, select: { imagePath: true } });
     if (!current) throw new NotFoundException('Promotion not found');
@@ -205,8 +206,9 @@ export class PromotionsService {
       throw new BadRequestException({ message: 'The image must be JPEG, PNG or WebP', code: 'UNSUPPORTED_IMAGE_TYPE' });
     }
 
-    const path = `promotions/${id}/${randomUUID()}.${IMAGE_TYPES[type]}`;
-    const { publicUrl } = await this.storage.uploadPublic(this.bucket, path, file.buffer, type);
+    const image = await toMainWebp(file.buffer);
+    const path = `promotions/${id}/${randomUUID()}.webp`;
+    const { publicUrl } = await this.storage.uploadPublic(this.bucket, path, image.buffer, image.contentType);
     try {
       const updated = await this.prisma.promotion.update({ where: { id }, data: { imageUrl: publicUrl, imagePath: path } });
       if (current.imagePath) await this.storage.removeFromBucket(this.bucket, [current.imagePath]);

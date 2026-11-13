@@ -474,26 +474,29 @@ Admin console:
   - JPEG, PNG or WebP, at most 5 MB each (`PRODUCT_IMAGE_MAX_BYTES`), at most 5 per product (`PRODUCT_IMAGES_MAX`).
   - The type is checked from the file's contents, so a renamed PDF is refused.
   - If any file is refused, nothing is uploaded.
-  - Returns `{ productId, imageUrl, images }`.
+  - **Since 13 Nov 2026 every photo is converted on the server:** stored as WebP, at most 1600 px on its longest side (smaller photos are not enlarged), turned upright from the camera's orientation, with hidden metadata (GPS location, camera details) removed. A 400 px WebP thumbnail is made too. The admin can keep uploading normal JPEG/PNG/WebP files. Needs migration `20261113120000_product_image_thumbnails` (nullable columns only).
+  - Returns `{ productId, imageUrl, thumbnailUrl, images }`.
 - **Reorder:** `PATCH /marketplace/products/:id/images/order` `{ imageIds: [...] }` lists every image once; the first becomes the main image.
 - **Delete:** `DELETE /marketplace/products/:id/images/:imageId` removes one photo (and its file); the next becomes the main image.
 - Deleting a product also deletes its photo files.
 - **Errors:**
   - 400 `UNSUPPORTED_IMAGE_TYPE`, `NO_IMAGE` or `INVALID_IMAGE_ORDER`;
+  - 400 `INVALID_IMAGE` when the file can't be read as a picture, or `IMAGE_TOO_LARGE` when it is over 40 megapixels;
   - 413 when the file is too large;
   - 409 `TOO_MANY_IMAGES`;
   - 503 `STORAGE_NOT_CONFIGURED` or `STORAGE_UNAVAILABLE`.
 
 Customer app:
 
-- Every product (list and detail) now has `images: [{ id, url, sortOrder }]` in display order.
+- Every product (list and detail) now has `images: [{ id, url, thumbnailUrl, width, height, sortOrder }]` in display order.
 - `imageUrl` is still there and is always the first photo, so screens that only use `imageUrl` work unchanged. Use `images` for a gallery.
+- **Thumbnails (13 Nov 2026):** use `product.thumbnailUrl` (or `images[i].thumbnailUrl`) on product cards and lists, and `url` on the product page. Photos uploaded before the change have `thumbnailUrl`, `width` and `height` set to `null`, so fall back to `url`: `thumbnailUrl ?? url`. `width`/`height` let the app reserve the right space before the picture loads.
 - `GET /marketplace/products/:id/images` (public) returns the same list.
 - The bundled fallback image is only needed while `imageUrl` is `null`.
 
 ## Promotions popup (2.1)
 
-Needs migration `20261110230000_add_promotions` (new table and two enums only). Uploaded popup images go to the public bucket `promotion-images` (created on first upload; `PROMOTION_IMAGES_BUCKET` to change it).
+Needs migration `20261110230000_add_promotions` (new table and two enums only). Uploaded popup images go to the public bucket `promotion-images` (created on first upload; `PROMOTION_IMAGES_BUCKET` to change it). Since 13 Nov 2026 they are converted to WebP (max 1600 px, metadata removed), like product photos; no thumbnail is made.
 
 Customer app:
 

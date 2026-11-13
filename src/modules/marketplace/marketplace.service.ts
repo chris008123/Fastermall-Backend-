@@ -22,7 +22,7 @@ const PRODUCT_INCLUDE = {
   vendor: { select: { id: true, name: true } },
   images: {
     orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }, { id: 'asc' }],
-    select: { id: true, url: true, sortOrder: true },
+    select: { id: true, url: true, thumbnailUrl: true, width: true, height: true, sortOrder: true },
   },
   // Designs the customer can pick when pre-ordering.
   variants: {

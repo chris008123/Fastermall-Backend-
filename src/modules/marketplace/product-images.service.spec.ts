@@ -13,18 +13,31 @@ import { ProductImagesController } from './product-images.controller';
 import { MarketplaceService } from './marketplace.service';
 import { ROLES_KEY } from '../../shared/decorators/roles.decorator';
 import { RolesGuard } from '../../shared/guards/roles.guard';
+import sharp = require('sharp');
 
-const JPEG = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0, 0x10, 0x4a, 0x46, 0x49, 0x46]);
-const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0x0d]);
-const WEBP = Buffer.concat([Buffer.from('RIFF'), Buffer.from([0x24, 0, 0, 0]), Buffer.from('WEBPVP8 ')]);
+// Magic bytes only: enough for sniffImageType, not a real picture.
+const JPEG_HEAD = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0, 0x10, 0x4a, 0x46, 0x49, 0x46]);
+const PNG_HEAD = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0x0d]);
+const WEBP_HEAD = Buffer.concat([Buffer.from('RIFF'), Buffer.from([0x24, 0, 0, 0]), Buffer.from('WEBPVP8 ')]);
 const PDF = Buffer.from('%PDF-1.7 not an image');
+
+// Real pictures, made once, for the upload tests (photos are now converted).
+let JPEG: Buffer;
+let PNG: Buffer;
+let WEBP: Buffer;
+beforeAll(async () => {
+  const base = () => sharp({ create: { width: 64, height: 48, channels: 3, background: '#3a7' } });
+  JPEG = await base().jpeg().toBuffer();
+  PNG = await base().png().toBuffer();
+  WEBP = await base().webp().toBuffer();
+});
 const file = (buffer: Buffer, originalname = 'photo.jpg', mimetype = 'image/jpeg') => ({ buffer, size: buffer.length, originalname, mimetype });
 
 describe('sniffImageType', () => {
   it('reads the type from the bytes, not the name', () => {
-    expect(sniffImageType(JPEG)).toBe('image/jpeg');
-    expect(sniffImageType(PNG)).toBe('image/png');
-    expect(sniffImageType(WEBP)).toBe('image/webp');
+    expect(sniffImageType(JPEG_HEAD)).toBe('image/jpeg');
+    expect(sniffImageType(PNG_HEAD)).toBe('image/png');
+    expect(sniffImageType(WEBP_HEAD)).toBe('image/webp');
     expect(sniffImageType(PDF)).toBeNull();
     expect(sniffImageType(Buffer.from('<svg></svg>'))).toBeNull();
     expect(sniffImageType(Buffer.alloc(0))).toBeNull();
@@ -47,7 +60,9 @@ function setup(existing: any[] = [], cfg: Record<string, unknown> = {}) {
       }),
       findMany: jest.fn(({ select }: any) => {
         const sorted = [...rows].sort((a, b) => a.sortOrder - b.sortOrder);
-        return Promise.resolve(select?.path && !select?.url ? sorted.map((r) => ({ path: r.path })) : sorted);
+        return Promise.resolve(
+          select?.path && !select?.url ? sorted.map((r) => ({ path: r.path, thumbnailPath: r.thumbnailPath ?? null })) : sorted,
+        );
       }),
       findFirst: jest.fn(({ where }) => Promise.resolve(rows.find((r) => r.id === where.id && r.productId === where.productId) ?? null)),
       delete: jest.fn(({ where }) => {
@@ -81,24 +96,44 @@ const stored = (id: string, sortOrder: number) => ({
   sortOrder,
   contentType: 'image/jpeg',
   sizeBytes: 10,
+  thumbnailUrl: null,
+  thumbnailPath: null,
 });
 
 describe('ProductImagesService.add', () => {
-  it('stores each photo under the product with its real type, and makes the first the main image', async () => {
+  it('stores every photo as WebP with a thumbnail, and makes the first the main image', async () => {
     const { svc, storage, prisma } = setup();
     const out = await svc.add('p1', [file(JPEG), file(PNG, 'b.png'), file(WEBP, 'renamed.jpg', 'image/jpeg')]);
 
     const calls = storage.uploadPublic.mock.calls;
-    expect(calls.map((c) => [c[0], c[3]])).toEqual([
-      ['product-images', 'image/jpeg'],
-      ['product-images', 'image/png'],
-      ['product-images', 'image/webp'], // from the bytes, not the name or mimetype
-    ]);
-    expect(calls[0][1]).toMatch(/^products\/p1\/[0-9a-f-]{36}\.jpg$/);
-    expect(calls[2][1]).toMatch(/\.webp$/);
+    // Main picture then thumbnail, for each of the three uploads.
+    expect(calls).toHaveLength(6);
+    for (const c of calls) {
+      expect(c[0]).toBe('product-images');
+      expect(c[3]).toBe('image/webp');
+      expect(sniffImageType(c[2] as Buffer)).toBe('image/webp');
+    }
+    expect(calls[0][1]).toMatch(/^products\/p1\/[0-9a-f-]{36}\.webp$/);
+    expect(calls[1][1]).toBe((calls[0][1] as string).replace('.webp', '-thumb.webp'));
+
+    const row = out.images[0] as any;
+    expect(row).toMatchObject({ contentType: 'image/webp', width: 64, height: 48, thumbnailUrl: expect.stringContaining('-thumb.webp') });
     expect(out.images.map((i: any) => i.sortOrder)).toEqual([0, 1, 2]);
-    expect(prisma.product.update).toHaveBeenCalledWith({ where: { id: 'p1' }, data: { imageUrl: out.images[0].url } });
+    expect(prisma.product.update).toHaveBeenCalledWith({
+      where: { id: 'p1' },
+      data: { imageUrl: out.images[0].url, thumbnailUrl: row.thumbnailUrl },
+    });
     expect(out.imageUrl).toBe(out.images[0].url);
+    expect(out.thumbnailUrl).toBe(row.thumbnailUrl);
+  });
+
+  it('refuses a file that looks like an image but is broken, uploading nothing', async () => {
+    const { svc, storage } = setup();
+    const broken = Buffer.concat([JPEG_HEAD, Buffer.alloc(200, 7)]);
+    const err: any = await svc.add('p1', [file(JPEG), file(broken, 'broken.jpg')]).catch((e) => e);
+    expect(err).toBeInstanceOf(BadRequestException);
+    expect(err.getResponse()).toMatchObject({ code: 'INVALID_IMAGE' });
+    expect(storage.uploadPublic).not.toHaveBeenCalled();
   });
 
   it('adds after the existing photos', async () => {
@@ -135,11 +170,12 @@ describe('ProductImagesService.add', () => {
   it('removes already-uploaded files if a later upload fails, and records nothing', async () => {
     const { svc, storage, prisma } = setup();
     storage.uploadPublic
-      .mockResolvedValueOnce({ path: 'products/p1/one.jpg', publicUrl: 'u1' })
+      .mockResolvedValueOnce({ path: 'products/p1/one.webp', publicUrl: 'u1' })
+      .mockResolvedValueOnce({ path: 'products/p1/one-thumb.webp', publicUrl: 'u1t' })
       .mockRejectedValueOnce(new ServiceUnavailableException('down'));
     await expect(svc.add('p1', [file(JPEG), file(PNG)])).rejects.toBeInstanceOf(ServiceUnavailableException);
-    const firstPath = storage.uploadPublic.mock.calls[0][1];
-    expect(storage.removeFromBucket).toHaveBeenCalledWith('product-images', [firstPath]);
+    const [mainPath, thumbPath] = storage.uploadPublic.mock.calls.slice(0, 2).map((c) => c[1]);
+    expect(storage.removeFromBucket).toHaveBeenCalledWith('product-images', [mainPath, thumbPath]);
     expect(prisma.productImage.createMany).not.toHaveBeenCalled();
   });
 });
@@ -150,7 +186,22 @@ describe('ProductImagesService remove and reorder', () => {
     const out = await svc.remove('p1', 'a');
     expect(storage.removeFromBucket).toHaveBeenCalledWith('product-images', ['products/p1/a.jpg']);
     expect(out.images.map((i: any) => i.id)).toEqual(['b']);
-    expect(prisma.product.update).toHaveBeenLastCalledWith({ where: { id: 'p1' }, data: { imageUrl: expect.stringContaining('/b.jpg') } });
+    expect(prisma.product.update).toHaveBeenLastCalledWith({
+      where: { id: 'p1' },
+      data: { imageUrl: expect.stringContaining('/b.jpg'), thumbnailUrl: null },
+    });
+  });
+
+  it('removing a converted photo deletes its thumbnail too', async () => {
+    const withThumb = { ...stored('a', 0), path: 'products/p1/a.webp', thumbnailPath: 'products/p1/a-thumb.webp', thumbnailUrl: 'https://t/a-thumb.webp' };
+    const { svc, storage } = setup([withThumb]);
+    await svc.remove('p1', 'a');
+    expect(storage.removeFromBucket).toHaveBeenCalledWith('product-images', ['products/p1/a.webp', 'products/p1/a-thumb.webp']);
+  });
+
+  it('lists both files of each photo for a product being deleted', async () => {
+    const { svc } = setup([stored('old', 0), { ...stored('new', 1), path: 'products/p1/new.webp', thumbnailPath: 'products/p1/new-thumb.webp' }]);
+    await expect(svc.pathsOf('p1')).resolves.toEqual(['products/p1/old.jpg', 'products/p1/new.webp', 'products/p1/new-thumb.webp']);
   });
 
   it('removing the last photo clears imageUrl; an external URL set by hand is kept', async () => {
