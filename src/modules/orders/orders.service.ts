@@ -759,7 +759,10 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
       },
     });
 
-    this.events.emit('order.status.updated', updated);
+    // Saving the same status again (a double tap in the console) is not news.
+    if (updated.status !== existingOrder.status) {
+      this.events.emit('order.status.updated', updated);
+    }
 
     return updated.delivery
       ? { ...updated, delivery: stripDeliverySecrets(updated.delivery) }

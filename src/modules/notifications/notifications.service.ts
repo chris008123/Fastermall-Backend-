@@ -1,4 +1,11 @@
-import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  Logger,
+  NotFoundException,
+  OnModuleDestroy,
+  OnModuleInit,
+} from '@nestjs/common';
 import { OnEvent } from '@nestjs/event-emitter';
 import { Prisma, StaffRole } from '@prisma/client';
 import { Expo } from 'expo-server-sdk';
@@ -44,15 +51,56 @@ export const CHANNELS = {
 // Partner notification switches the backend acts on (see PreferencesService).
 type PartnerCategory = 'newJobs' | 'jobUpdates' | 'payments';
 
-const ORDER_STATUS_COPY: Record<string, string> = {
-  PENDING: 'pending',
-  CONFIRMED: 'confirmed',
-  PREPARING: 'being prepared',
-  OUT_FOR_DELIVERY: 'out for delivery',
-  DELIVERED: 'delivered',
-  CANCELLED: 'cancelled',
-  REFUNDED: 'refunded',
-};
+type Copy = { title: string; body: string };
+
+// What the customer is told when an order changes status. Specific titles
+// read well on a lock screen; the vendor is named when the order has one.
+// PENDING is where every order starts ("Order placed" already covers it).
+export function orderStatusCopy(status: string, ref: string, vendor?: string | null): Copy | null {
+  const who = vendor?.trim() || 'The shop';
+  switch (status) {
+    case 'CONFIRMED':
+      return { title: `${who} accepted your order`, body: `Order ${ref} is confirmed. We'll tell you when it's being prepared.` };
+    case 'PREPARING':
+      return { title: `${who} is preparing your order`, body: `Order ${ref} is being prepared.` };
+    case 'OUT_FOR_DELIVERY':
+      return { title: 'Your order is on the way', body: `Order ${ref} is out for delivery.` };
+    case 'DELIVERED':
+      return { title: 'Order delivered', body: `Order ${ref} has been delivered. Enjoy!` };
+    case 'CANCELLED':
+      return { title: 'Order cancelled', body: `Order ${ref} was cancelled. If you paid, we'll refund you.` };
+    case 'REFUNDED':
+      return { title: 'Order refunded', body: `Order ${ref} has been refunded.` };
+    default:
+      return null;
+  }
+}
+
+// Laundry moves through ~13 internal steps (tagged, drying, folding, quality
+// check…). Customers are only told about the ones they act on or wait for;
+// the rest show on the order's tracking timeline without a push.
+export function laundryStatusCopy(status: string, ref: string, pickupMode?: string | null): Copy | null {
+  switch (status) {
+    case 'RECEIVED':
+      return { title: "We've got your laundry", body: `Laundry order ${ref} has arrived. We'll tell you when washing starts.` };
+    case 'WASHING':
+      return { title: 'Your laundry is being washed', body: `Laundry order ${ref} is in the wash.` };
+    case 'READY_FOR_DELIVERY':
+      return pickupMode?.toLowerCase() === 'dropoff'
+        ? { title: 'Your laundry is ready', body: `Laundry order ${ref} is clean and packed, ready for you to collect.` }
+        : { title: 'Your laundry is ready', body: `Laundry order ${ref} is clean and packed. We'll bring it to you soon.` };
+    case 'OUT_FOR_DELIVERY':
+      return { title: 'Your laundry is on the way', body: `Laundry order ${ref} is out for delivery.` };
+    case 'COMPLETED':
+      return { title: 'Laundry order complete', body: `Laundry order ${ref} is done. Thanks for using Fastermall!` };
+    default:
+      return null;
+  }
+}
+
+// A payment confirmed this soon after the order was placed is the same
+// moment as "Order placed", so it is stored in the list but not pushed.
+const PAYMENT_PUSH_QUIET_MS = 2 * 60 * 1000;
 
 const DELIVERY_STATUS_COPY: Record<string, { title: string; body: string }> = {
   EN_ROUTE_TO_PICKUP: {
@@ -70,14 +118,50 @@ const shortRef = (id: string) => `#${id.slice(0, 8).toUpperCase()}`;
 const cleanData = (data: Record<string, string | undefined> = {}) =>
   Object.fromEntries(Object.entries(data).filter(([, v]) => v !== undefined)) as Record<string, string>;
 
+// Retention: read notifications go after 90 days, anything after a year. The
+// list is a recent-activity feed (orders keep their own history), so this
+// only stops the table growing forever.
+export const READ_RETENTION_MS = 90 * 24 * 60 * 60 * 1000;
+export const MAX_RETENTION_MS = 365 * 24 * 60 * 60 * 1000;
+const CLEANUP_EVERY_MS = 6 * 60 * 60 * 1000;
+
 @Injectable()
-export class NotificationsService {
+export class NotificationsService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(NotificationsService.name);
+  private cleanupTimer?: NodeJS.Timeout;
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly push: PushService,
   ) {}
+
+  onModuleInit() {
+    this.cleanupTimer = setInterval(() => void this.cleanupOld(), CLEANUP_EVERY_MS);
+    this.cleanupTimer.unref();
+  }
+
+  onModuleDestroy() {
+    if (this.cleanupTimer) clearInterval(this.cleanupTimer);
+  }
+
+  /** Deletes read notifications older than 90 days and any older than a year. Never throws. */
+  async cleanupOld(now: Date = new Date()): Promise<number> {
+    try {
+      const { count } = await this.prisma.notification.deleteMany({
+        where: {
+          OR: [
+            { isRead: true, createdAt: { lt: new Date(now.getTime() - READ_RETENTION_MS) } },
+            { createdAt: { lt: new Date(now.getTime() - MAX_RETENTION_MS) } },
+          ],
+        },
+      });
+      if (count > 0) this.logger.log(`Removed ${count} old notifications`);
+      return count;
+    } catch (error) {
+      this.logger.error(`Notification cleanup failed: ${(error as Error).message}`);
+      return 0;
+    }
+  }
 
   // ───────── Domain Event Bus listeners ─────────
   // Notifications never gets called directly by Orders/Payments/Laundry/Logistics;
@@ -95,11 +179,11 @@ export class NotificationsService {
   }
 
   @OnEvent('order.status.updated')
-  async onOrderStatusUpdated(order: { customerId: string; id: string; status: string }) {
-    const label = ORDER_STATUS_COPY[order.status] ?? order.status.toLowerCase().replace(/_/g, ' ');
+  async onOrderStatusUpdated(order: { customerId: string; id: string; status: string; vendorName?: string | null }) {
+    const copy = orderStatusCopy(order.status, shortRef(order.id), order.vendorName);
+    if (!copy) return;
     await this.notifyCustomer(order.customerId, {
-      title: 'Order update',
-      body: `Your order ${shortRef(order.id)} is now ${label}.`,
+      ...copy,
       type: 'ORDER_STATUS_UPDATED',
       data: { orderId: order.id, status: order.status },
       channelId: CHANNELS.orders,
@@ -139,10 +223,11 @@ export class NotificationsService {
   }
 
   @OnEvent('laundry.status.updated')
-  async onLaundryStatusUpdated(order: { customerId: string; id: string; status: string }) {
+  async onLaundryStatusUpdated(order: { customerId: string; id: string; status: string; pickupMode?: string | null }) {
+    const copy = laundryStatusCopy(order.status, shortRef(order.id), order.pickupMode);
+    if (!copy) return; // an internal step: shown on the tracking timeline only
     await this.notifyCustomer(order.customerId, {
-      title: 'Laundry update',
-      body: `Your laundry order is now: ${order.status.toLowerCase().replace(/_/g, ' ')}.`,
+      ...copy,
       type: 'LAUNDRY_STATUS_UPDATED',
       data: { laundryOrderId: order.id, status: order.status },
       channelId: CHANNELS.orders,
@@ -153,21 +238,32 @@ export class NotificationsService {
   async onPaymentSuccessful(payment: { orderId?: string; laundryOrderId?: string }) {
     // Payment doesn't carry customerId directly — look it up via the order
     let customerId: string | undefined;
+    let placedAt: Date | undefined;
     if (payment.orderId) {
       const order = await this.prisma.order.findUnique({ where: { id: payment.orderId } });
       customerId = order?.customerId;
+      placedAt = order?.createdAt;
     } else if (payment.laundryOrderId) {
       const order = await this.prisma.laundryOrder.findUnique({ where: { id: payment.laundryOrderId } });
       customerId = order?.customerId;
+      placedAt = order?.createdAt;
     }
     if (customerId) {
-      await this.notifyCustomer(customerId, {
-        title: 'Payment successful',
-        body: 'Your payment has been confirmed.',
-        type: 'PAYMENT_SUCCESSFUL',
-        data: { orderId: payment.orderId, laundryOrderId: payment.laundryOrderId },
-        channelId: CHANNELS.orders,
-      });
+      // Paid by card at checkout: "Order placed" was pushed seconds ago, so
+      // this one only goes in the list. A payment confirmed later (cash
+      // collected at the door, a slow MoMo approval) is still pushed.
+      const justPlaced = !!placedAt && Date.now() - placedAt.getTime() < PAYMENT_PUSH_QUIET_MS;
+      await this.notifyCustomer(
+        customerId,
+        {
+          title: 'Payment successful',
+          body: 'Your payment has been confirmed.',
+          type: 'PAYMENT_SUCCESSFUL',
+          data: { orderId: payment.orderId, laundryOrderId: payment.laundryOrderId },
+          channelId: CHANNELS.orders,
+        },
+        { push: !justPlaced },
+      );
     }
   }
 
@@ -258,6 +354,22 @@ export class NotificationsService {
     };
     if (loud.length) void this.push.sendToOwners({ staffUserIds: loud }, payload);
     if (quiet.length) void this.push.sendToOwners({ staffUserIds: quiet }, { ...payload, sound: false });
+  }
+
+  // Emitted by Logistics when a partner claims a delivery. Every other
+  // partner's "New delivery available" for it now points at a job that is
+  // gone, so those alerts are removed (the claimer has the job itself).
+  @OnEvent('delivery.claimed')
+  async onDeliveryClaimed(event: { deliveryId: string; staffUserId: string }) {
+    await this.safely(() =>
+      this.prisma.notification.deleteMany({
+        where: {
+          type: 'DELIVERY_AVAILABLE',
+          staffUserId: { not: null },
+          data: { path: ['deliveryId'], equals: event.deliveryId },
+        },
+      }),
+    );
   }
 
   // Emitted when an admin approves or rejects a partner's document.
@@ -681,7 +793,7 @@ export class NotificationsService {
 
   // Stores the in-app notification, then sends the push. Neither step is
   // allowed to throw into the event bus.
-  private async notifyCustomer(userId: string, input: NotifyInput) {
+  private async notifyCustomer(userId: string, input: NotifyInput, opts: { push?: boolean } = {}) {
     await this.safely(() =>
       this.prisma.notification.create({
         data: {
@@ -698,6 +810,7 @@ export class NotificationsService {
     // "deliveries", lands in Android's fallback channel with no popup or
     // sound, so every customer push goes out on "orders" whatever the caller
     // asked for.
+    if (opts.push === false) return;
     void this.push.sendToOwners(
       { userIds: [userId] },
       { title: input.title, body: input.body, channelId: CHANNELS.orders, data: { type: input.type, ...cleanData(input.data) } },
