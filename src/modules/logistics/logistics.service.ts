@@ -501,6 +501,8 @@ export class LogisticsService {
       claimed,
       claimed.order?.customer?.id ?? claimed.laundryOrder?.customerId,
     );
+    // Lets Notifications remove the other partners' now-stale job alerts.
+    this.events.emit('delivery.claimed', { deliveryId, staffUserId: userId });
 
     return this.withStageHistory(claimed);
   }

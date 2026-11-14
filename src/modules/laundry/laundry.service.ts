@@ -265,7 +265,10 @@ export class LaundryService {
       where: { id },
       data: { status: dto.status },
     });
-    this.events.emit('laundry.status.updated', updated);
+    // Saving the same status again is not news for the customer.
+    if (updated.status !== order.status) {
+      this.events.emit('laundry.status.updated', updated);
+    }
     return updated;
   }
 }
