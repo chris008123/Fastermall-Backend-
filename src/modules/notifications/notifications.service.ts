@@ -191,7 +191,8 @@ export class NotificationsService {
         laundryOrderId: event.laundryOrderId,
         status: event.status,
       },
-      channelId: CHANNELS.deliveries,
+      // Customers: "orders" (their app has no "deliveries" channel).
+      channelId: CHANNELS.orders,
     });
   }
 
@@ -692,9 +693,14 @@ export class NotificationsService {
         },
       }),
     );
+    // The customer app only creates the "orders" channel (plus "offers" for its
+    // own local notices). A push on any other channel id, such as
+    // "deliveries", lands in Android's fallback channel with no popup or
+    // sound, so every customer push goes out on "orders" whatever the caller
+    // asked for.
     void this.push.sendToOwners(
       { userIds: [userId] },
-      { title: input.title, body: input.body, channelId: input.channelId, data: { type: input.type, ...cleanData(input.data) } },
+      { title: input.title, body: input.body, channelId: CHANNELS.orders, data: { type: input.type, ...cleanData(input.data) } },
     );
   }
 

@@ -37,6 +37,18 @@ describe('broadcast popup fix', () => {
     expect(push.sendToOwners.mock.calls[0][1]).toMatchObject({ channelId: CHANNELS.orders, filterAs: 'offers' });
   });
 
+  it('customer delivery progress goes on the orders channel (the customer app has no deliveries channel)', async () => {
+    const { svc, push } = notifications();
+    for (const status of ['EN_ROUTE_TO_PICKUP', 'PICKED_UP', 'EN_ROUTE_TO_CUSTOMER', 'DELIVERED']) {
+      await svc.onDeliveryStatusUpdated({ deliveryId: 'd1', status, customerId: 'u1', orderId: 'o1' });
+    }
+    expect(push.sendToOwners).toHaveBeenCalledTimes(4);
+    for (const [targets, payload] of push.sendToOwners.mock.calls) {
+      expect(targets).toEqual({ userIds: ['u1'] });
+      expect(payload).toMatchObject({ channelId: CHANNELS.orders, data: expect.objectContaining({ orderId: 'o1' }) });
+    }
+  });
+
   it('staff: sent on the deliveries channel', async () => {
     const { svc, push } = notifications();
     await svc.broadcast('DELIVERY_PARTNER', 'Rain', 'Ride safe');
