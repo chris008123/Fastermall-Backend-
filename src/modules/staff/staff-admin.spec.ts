@@ -47,8 +47,66 @@ describe('StaffService.updateStaff', () => {
     await expect(svc.updateStaff('s1', { fullName: '   ' })).rejects.toBeInstanceOf(BadRequestException);
     prisma.staffUser.update.mockRejectedValueOnce(known('P2025'));
     await expect(svc.updateStaff('x', { fullName: 'A' })).rejects.toBeInstanceOf(NotFoundException);
+    prisma.staffUser.findUnique.mockResolvedValueOnce({ role: 'VENDOR', email: 'old@x.com' });
     prisma.staffUser.update.mockRejectedValueOnce(known('P2002'));
     await expect(svc.updateStaff('s1', { email: 'dup@x.com' })).rejects.toBeInstanceOf(ConflictException);
+  });
+});
+
+// Setting an admin's password or sign-in email hands over that account, so
+// the acting admin must re-enter their own password for ADMIN targets.
+describe("StaffService: changing an admin's sign-in details needs your own password", () => {
+  const actor = { id: 'me', passwordHash: '', failedLoginAttempts: 0, lockedUntil: null, isActive: true };
+  async function withActor() {
+    const ctx = setup();
+    const hash = await bcrypt.hash('my-own-password', 4);
+    ctx.prisma.staffUser.findUnique.mockImplementation(async ({ where }: any) => {
+      if (where.id === 'me') return { ...actor, passwordHash: hash };
+      if (where.id === 'admin2') return { id: 'admin2', role: StaffRole.ADMIN, email: 'a2@x.com' };
+      if (where.id === 'vendor1') return { id: 'vendor1', role: StaffRole.VENDOR, email: 'v@x.com' };
+      return null;
+    });
+    return ctx;
+  }
+  const code = async (p: Promise<unknown>) => {
+    try {
+      await p;
+    } catch (e: any) {
+      return e.getResponse?.().code ?? e.constructor.name;
+    }
+    return 'resolved';
+  };
+
+  it('asks for it (400 CURRENT_PASSWORD_REQUIRED) when setting an admin password or email', async () => {
+    const { svc, prisma } = await withActor();
+    expect(await code(svc.adminSetPassword('admin2', 'new-password-1', 'me'))).toBe('CURRENT_PASSWORD_REQUIRED');
+    expect(await code(svc.updateStaff('admin2', { email: 'new@x.com' }, 'me'))).toBe('CURRENT_PASSWORD_REQUIRED');
+    expect(prisma.staffSession.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('refuses a wrong one (400, never 401) and accepts the right one', async () => {
+    const { svc, prisma } = await withActor();
+    expect(await code(svc.adminSetPassword('admin2', 'new-password-1', 'me', 'wrong-password'))).toBe('INVALID_CURRENT_PASSWORD');
+    expect(await code(svc.adminSetPassword('admin2', 'new-password-1', 'me', 'my-own-password'))).toBe('resolved');
+    expect(prisma.staffSession.updateMany).toHaveBeenCalled(); // the admin's sessions ended
+    expect(await code(svc.updateStaff('admin2', { email: 'new@x.com', currentPassword: 'my-own-password' }, 'me'))).toBe('resolved');
+  });
+
+  it('is not needed for other roles, for name/phone edits, or for an unchanged email', async () => {
+    const { svc } = await withActor();
+    expect(await code(svc.adminSetPassword('vendor1', 'new-password-1', 'me'))).toBe('resolved');
+    expect(await code(svc.updateStaff('vendor1', { email: 'v2@x.com' }, 'me'))).toBe('resolved');
+    expect(await code(svc.updateStaff('admin2', { fullName: 'Ama' }, 'me'))).toBe('resolved');
+    expect(await code(svc.updateStaff('admin2', { email: 'a2@x.com' }, 'me'))).toBe('resolved');
+  });
+
+  it('the controller passes who is acting', async () => {
+    const svc = { updateStaff: jest.fn(), adminSetPassword: jest.fn() };
+    const c = new StaffController(svc as any);
+    c.updateStaff({ userId: 'me' }, 'admin2', { email: 'n@x.com', currentPassword: 'pw' });
+    c.adminSetPassword({ userId: 'me' }, 'admin2', { password: 'new-password-1', currentPassword: 'pw' });
+    expect(svc.updateStaff).toHaveBeenCalledWith('admin2', { email: 'n@x.com', currentPassword: 'pw' }, 'me');
+    expect(svc.adminSetPassword).toHaveBeenCalledWith('admin2', 'new-password-1', 'me', 'pw');
   });
 });
 

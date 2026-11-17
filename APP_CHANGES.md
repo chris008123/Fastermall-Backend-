@@ -694,3 +694,31 @@ Admin console:
 - `PUT /admin/legal/:slug` with `{ title?, content }` publishes at once as the next version (`publishedAt` = now). Sending the same text again changes nothing. `content` must be 50 to 100,000 characters. Each publish is in the audit log as `admin.legal.put`.
 - Raw HTML in the text is shown as text, never run; links may only be web, email, phone or relative; images are dropped.
 
+
+## Admin safeguards (17 Nov 2026)
+
+No migration. Found while comparing the admin console with this backend.
+
+Admin console:
+
+- **`PATCH /orders/:id/status` only moves orders forward.**
+  - Allowed: PENDING → CONFIRMED → PREPARING → OUT_FOR_DELIVERY → DELIVERED (skipping ahead is fine), and CANCELLED until delivered.
+  - Going back, or changing a DELIVERED / CANCELLED / REFUNDED order: **409** `INVALID_STATUS_CHANGE` / `ORDER_CLOSED`, with `allowed` (the statuses it could go to).
+  - `REFUNDED`: **400** `REFUND_ON_PAYMENT`. Refund the payment with `POST /payments/:id/refund` instead.
+  - Saving the status it already has is still a harmless no-op.
+  - The write is conditional, so if the order changed meanwhile: **409** `ORDER_STATE_CHANGED`.
+- **`POST /admin/partners/:staffId/payouts` and `POST /payments/:id/refund` accept `Idempotency-Key`** (8–128 letters, numbers, `.`, `_`, `-`). The same key with the same body replays the first answer instead of recording the payout or refund again (`Idempotent-Replayed: true`). The same key with a different body: 422 `IDEMPOTENCY_KEY_REUSED`. While the first is still running: 409 `IDEMPOTENCY_IN_PROGRESS`. No header: behaves as before.
+- **Changing an admin's sign-in details needs the acting admin's own password.** Applies to `PATCH /staff/users/:id/password` and to an email change on `PATCH /staff/users/:id` when the account is an ADMIN.
+  - Send `currentPassword`. Without it: **400** `CURRENT_PASSWORD_REQUIRED`. Wrong: **400** `INVALID_CURRENT_PASSWORD` (never 401), and it counts towards the acting admin's own login lockout.
+  - Other roles, and name or phone edits, are unchanged.
+- **New setting `partnerDocumentsRequired`** (boolean, default `false`) in `GET/PATCH /admin/settings`. See the partner app section below.
+- **`GET /marketplace/products/:id/variants`** (ADMIN) lists every design of a product, including switched-off ones, so they can be switched back on. The public product still lists active designs only.
+- Fee settings now accept every 2-decimal amount. 4.35, 8.20 and 0.29 used to be refused because of floating-point rounding.
+
+Delivery (partner) app:
+
+- With `partnerDocumentsRequired` on, a partner whose required documents aren't all approved and unexpired can't go online (`PATCH /logistics/me` with `isAvailable: true`) or take a delivery (`POST /logistics/deliveries/:id/claim` and `/accept`).
+  - Required: ID card and profile photo; motorcycles also need licence, registration and insurance.
+  - The answer is **403** `DOCUMENTS_REQUIRED` with `missing: [DocumentType…]`; show it and point to the Documents screen.
+  - Going offline is always allowed.
+  - Off by default: turn it on in the console once partners have uploaded their papers.

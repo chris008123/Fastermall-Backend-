@@ -245,6 +245,15 @@ export class PreOrdersService {
 
   // Variants (designs) on a product.
 
+  async listVariants(productId: string) {
+    const product = await this.prisma.product.findUnique({ where: { id: productId }, select: { id: true } });
+    if (!product) throw new NotFoundException('Product not found');
+    return this.prisma.productVariant.findMany({
+      where: { productId },
+      orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }, { id: 'asc' }],
+    });
+  }
+
   async createVariant(productId: string, dto: CreateVariantDto) {
     const product = await this.prisma.product.findUnique({ where: { id: productId }, select: { id: true } });
     if (!product) throw new NotFoundException('Product not found');

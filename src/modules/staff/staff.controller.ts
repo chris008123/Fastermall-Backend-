@@ -93,16 +93,16 @@ export class StaffController {
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(StaffRole.ADMIN)
   @Patch('users/:id')
-  updateStaff(@Param('id') id: string, @Body() dto: UpdateStaffDto) {
-    return this.staffService.updateStaff(id, dto);
+  updateStaff(@CurrentUser() user: { userId: string }, @Param('id') id: string, @Body() dto: UpdateStaffDto) {
+    return this.staffService.updateStaff(id, dto, user.userId);
   }
 
   // Admin sets a new password; every session of that account ends.
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(StaffRole.ADMIN)
   @Patch('users/:id/password')
-  adminSetPassword(@Param('id') id: string, @Body() dto: AdminSetStaffPasswordDto) {
-    return this.staffService.adminSetPassword(id, dto.password);
+  adminSetPassword(@CurrentUser() user: { userId: string }, @Param('id') id: string, @Body() dto: AdminSetStaffPasswordDto) {
+    return this.staffService.adminSetPassword(id, dto.password, user.userId, dto.currentPassword);
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard)

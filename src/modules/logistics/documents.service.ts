@@ -22,8 +22,8 @@ const EXTENSION: Record<string, string> = {
 };
 
 // What a partner must have approved. Walking partners need no vehicle papers.
-const REQUIRED_ALWAYS: DocumentType[] = ['ID_CARD', 'PROFILE_PHOTO'] as DocumentType[];
-const REQUIRED_MOTORCYCLE: DocumentType[] = ['DRIVERS_LICENSE', 'VEHICLE_REGISTRATION', 'INSURANCE'] as DocumentType[];
+export const REQUIRED_ALWAYS: DocumentType[] = ['ID_CARD', 'PROFILE_PHOTO'] as DocumentType[];
+export const REQUIRED_MOTORCYCLE: DocumentType[] = ['DRIVERS_LICENSE', 'VEHICLE_REGISTRATION', 'INSURANCE'] as DocumentType[];
 // These expire, so an expiry date is required.
 const NEEDS_EXPIRY: DocumentType[] = ['DRIVERS_LICENSE', 'INSURANCE', 'VEHICLE_REGISTRATION'] as DocumentType[];
 // Photos only.
@@ -39,6 +39,29 @@ const LABEL: Record<string, string> = {
   VEHICLE_REGISTRATION: 'Vehicle registration',
   INSURANCE: 'Insurance',
 };
+
+/**
+ * Whether a partner's approved, unexpired documents cover everything their
+ * partner type needs. Used for the app's checklist and, when the
+ * partnerDocumentsRequired setting is on, to stop unverified partners taking
+ * deliveries (LogisticsService).
+ */
+export function partnerVerification(
+  partnerType: string,
+  docs: { type: any; status: any; expiresAt: Date | null }[],
+  now: Date = new Date(),
+) {
+  const soon = new Date(now.getTime() + EXPIRING_SOON_DAYS * 24 * 60 * 60 * 1000);
+  const approved = docs.filter((d) => d.status === 'APPROVED' && (!d.expiresAt || d.expiresAt > now));
+  const required = partnerType === 'MOTORCYCLE' ? [...REQUIRED_ALWAYS, ...REQUIRED_MOTORCYCLE] : REQUIRED_ALWAYS;
+  const missing = required.filter((t) => !approved.some((d) => d.type === t));
+  return {
+    status: missing.length === 0 ? 'VERIFIED' : 'INCOMPLETE',
+    required,
+    missing,
+    expiringSoon: approved.filter((d) => d.expiresAt && d.expiresAt <= soon).map((d) => d.type),
+  };
+}
 
 /**
  * Partner verification documents. Files go phone -> private storage through a
@@ -198,17 +221,7 @@ export class DocumentsService {
   }
 
   private verificationOf(partnerType: string, docs: { type: any; status: any; expiresAt: Date | null }[]) {
-    const now = new Date();
-    const soon = new Date(now.getTime() + EXPIRING_SOON_DAYS * 24 * 60 * 60 * 1000);
-    const approved = docs.filter((d) => d.status === 'APPROVED' && (!d.expiresAt || d.expiresAt > now));
-    const required = this.requiredFor(partnerType);
-    const missing = required.filter((t) => !approved.some((d) => d.type === t));
-    return {
-      status: missing.length === 0 ? 'VERIFIED' : 'INCOMPLETE',
-      required,
-      missing,
-      expiringSoon: approved.filter((d) => d.expiresAt && d.expiresAt <= soon).map((d) => d.type),
-    };
+    return partnerVerification(partnerType, docs);
   }
 
   /**

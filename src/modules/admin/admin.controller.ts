@@ -1,4 +1,5 @@
-import { Body, Controller, Get, Param, Post, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post, Query, UseGuards, UseInterceptors } from '@nestjs/common';
+import { IdempotencyInterceptor } from '../../shared/interceptors/idempotency.interceptor';
 import { NotificationsService } from '../notifications/notifications.service';
 import { CurrentUser } from '../../shared/decorators/current-user.decorator';
 import { BroadcastDto } from './dto/broadcast.dto';
@@ -73,7 +74,10 @@ export class AdminController {
     return this.adminService.listPayouts(staffId);
   }
 
+  // A retry with the same Idempotency-Key (the console sends one per payout)
+  // gets the first answer back instead of recording the payout twice.
   @Post('partners/:staffId/payouts')
+  @UseInterceptors(IdempotencyInterceptor)
   createPayout(
     @CurrentUser() user: { userId: string },
     @Param('staffId') staffId: string,

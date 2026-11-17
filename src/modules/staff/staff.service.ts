@@ -12,7 +12,7 @@ import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import * as bcrypt from 'bcrypt';
 import { createHash, randomBytes, randomInt, timingSafeEqual } from 'crypto';
-import { Prisma } from '@prisma/client';
+import { Prisma, StaffRole } from '@prisma/client';
 import { PrismaService } from '../../database/prisma.service';
 import { LoginStaffDto } from './dto/login-staff.dto';
 import { CreateStaffDto } from './dto/create-staff.dto';
@@ -244,9 +244,10 @@ export class StaffService {
    * (PATCH /staff/users/:id/password). Like a self-service reset, every
    * session of that account ends and the lockout is cleared.
    */
-  async adminSetPassword(id: string, password: string) {
-    const exists = await this.prisma.staffUser.findUnique({ where: { id }, select: { id: true } });
+  async adminSetPassword(id: string, password: string, actorId?: string, currentPassword?: string) {
+    const exists = await this.prisma.staffUser.findUnique({ where: { id }, select: { id: true, role: true } });
     if (!exists) throw new NotFoundException('Staff account not found');
+    await this.assertCanChangeCredentials(exists.role, actorId, currentPassword);
     await this.replacePassword(id, await bcrypt.hash(password, 10));
     return { id, passwordReset: true };
   }
@@ -487,7 +488,32 @@ export class StaffService {
   }
 
   // Admin-only. Empty strings clear the phone; name and email can't be cleared.
-  async updateStaff(id: string, dto: UpdateStaffDto) {
+  /**
+   * Whoever can set an admin's password or sign-in email can take over that
+   * admin's account (refunds, payouts, other admins). So for an ADMIN account
+   * the acting admin must type their own password too: a stolen session or an
+   * unattended laptop isn't enough. Other roles are unchanged, so a locked-out
+   * partner can still be helped quickly. Wrong passwords count towards the
+   * acting admin's own login lockout.
+   */
+  private async assertCanChangeCredentials(targetRole: string, actorId: string | undefined, currentPassword: string | undefined) {
+    if (targetRole !== StaffRole.ADMIN || !actorId) return;
+    if (!currentPassword) {
+      throw new BadRequestException({
+        message: "Enter your own password to change an admin's sign-in details",
+        code: 'CURRENT_PASSWORD_REQUIRED',
+      });
+    }
+    await this.assertCurrentPassword(actorId, currentPassword);
+  }
+
+  async updateStaff(id: string, dto: UpdateStaffDto, actorId?: string) {
+    if (dto.email !== undefined) {
+      const target = await this.prisma.staffUser.findUnique({ where: { id }, select: { role: true, email: true } });
+      if (!target) throw new NotFoundException('Staff account not found');
+      // Saving the same email again isn't a change.
+      if (dto.email.trim() !== target.email) await this.assertCanChangeCredentials(target.role, actorId, dto.currentPassword);
+    }
     const data: Prisma.StaffUserUpdateInput = {};
     if (dto.fullName !== undefined) data.fullName = dto.fullName.trim();
     if (dto.email !== undefined) data.email = dto.email.trim(); // login matches email exactly, as createStaff stores it

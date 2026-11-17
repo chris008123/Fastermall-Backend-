@@ -25,6 +25,14 @@ export interface PlatformSettings {
    * without + (e.g. 233241234567). Empty until an admin sets it.
    */
   whatsappContactNumber: string;
+  /**
+   * When on, a delivery partner can only go online and take deliveries once
+   * every document their partner type needs (ID and photo; plus licence,
+   * registration and insurance for motorcycles) is approved and unexpired.
+   * Off by default so partners already working aren't blocked the moment
+   * this ships: turn it on once they've uploaded their papers.
+   */
+  partnerDocumentsRequired: boolean;
 }
 
 export type SettingKey = keyof PlatformSettings;
@@ -51,8 +59,10 @@ const MONEY_MAX = 10_000;
 const CACHE_MS = 30_000;
 
 type Rule = (v: unknown) => string | null;
+// Two decimals, compared in pesewas: 4.35 * 100 is 434.99999999999994 in
+// floating point, so an exact comparison would refuse ordinary amounts.
 const money: Rule = (v) =>
-  typeof v === 'number' && Number.isFinite(v) && v >= 0 && v <= MONEY_MAX && Math.round(v * 100) === v * 100
+  typeof v === 'number' && Number.isFinite(v) && v >= 0 && v <= MONEY_MAX && Math.abs(v * 100 - Math.round(v * 100)) < 1e-6
     ? null
     : `must be an amount between 0 and ${MONEY_MAX} with at most 2 decimals`;
 const RULES: Record<SettingKey, Rule> = {
@@ -66,6 +76,7 @@ const RULES: Record<SettingKey, Rule> = {
     typeof v === 'string' && (v === '' || /^[1-9]\d{9,14}$/.test(v))
       ? null
       : 'must be a phone number with its country code, e.g. 233241234567 (or empty to remove it)',
+  partnerDocumentsRequired: (v) => (typeof v === 'boolean' ? null : 'must be true or false'),
 };
 
 // Applied to incoming values before the rules run.
@@ -92,6 +103,7 @@ export class SettingsService {
       maintenanceMode: false,
       maintenanceMessage: 'Fastermall is down for maintenance. Please try again shortly.',
       whatsappContactNumber: '',
+      partnerDocumentsRequired: false,
     };
   }
 

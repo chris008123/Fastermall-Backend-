@@ -18,6 +18,7 @@ import { MarketplaceService } from '../marketplace/marketplace.service';
 import { FoodService } from '../food/food.service';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { UpdateOrderStatusDto } from './dto/update-order-status.dto';
+import { checkOrderStatusChange } from './order-status-rules';
 import * as bcrypt from 'bcrypt';
 import { randomInt } from 'crypto';
 import { isUniqueViolation } from '../../shared/utils/idempotency';
@@ -734,19 +735,31 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
       throw new NotFoundException('Order not found');
     }
 
+    // Only forward moves and cancelling an open order (see order-status-rules.ts).
+    const check = checkOrderStatusChange(existingOrder.status, dto.status);
+    if (!check.ok) {
+      const body = { message: check.message, code: check.code, allowed: check.allowed };
+      throw check.code === 'REFUND_ON_PAYMENT' ? new BadRequestException(body) : new ConflictException(body);
+    }
+
     // Cancelling an order that has not left the shop puts its stock back,
     // once (the status flip inside is conditional).
-    if (dto.status === OrderStatus.CANCELLED) {
-      await this.cancelAndRestock(existingOrder, [
+    if (dto.status === OrderStatus.CANCELLED && !check.noop) {
+      const flipped = await this.cancelAndRestock(existingOrder, [
         OrderStatus.PENDING,
         OrderStatus.CONFIRMED,
         OrderStatus.PREPARING,
       ]);
+      // Out for delivery: no restock, but it can still be cancelled.
+      if (!flipped) await this.flipStatus(existingOrder.id, [OrderStatus.OUT_FOR_DELIVERY], OrderStatus.CANCELLED);
+    } else if (!check.noop) {
+      // Conditional on the status we checked, so two admins (or an admin and
+      // the delivery flow) changing it at the same moment can't both win.
+      await this.flipStatus(existingOrder.id, [existingOrder.status], dto.status);
     }
 
-    const updated = await this.prisma.order.update({
+    const updated = await this.prisma.order.findUnique({
       where: { id },
-      data: { status: dto.status },
       include: {
         items: {
           include: {
@@ -758,6 +771,7 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
         delivery: true,
       },
     });
+    if (!updated) throw new NotFoundException('Order not found');
 
     // Saving the same status again (a double tap in the console) is not news.
     if (updated.status !== existingOrder.status) {
@@ -767,6 +781,20 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
     return updated.delivery
       ? { ...updated, delivery: stripDeliverySecrets(updated.delivery) }
       : updated;
+  }
+
+  /** Sets the status only while it is still one of `from`; a 409 if it changed meanwhile. */
+  private async flipStatus(orderId: string, from: OrderStatus[], to: OrderStatus) {
+    const changed = await this.prisma.order.updateMany({
+      where: { id: orderId, status: { in: from } },
+      data: { status: to },
+    });
+    if (changed.count === 0) {
+      throw new ConflictException({
+        message: 'This order was just changed by someone else. Reload it and try again.',
+        code: 'ORDER_STATE_CHANGED',
+      });
+    }
   }
 
   /**

@@ -15,6 +15,7 @@ import {
   StaffRole,
 } from '@prisma/client';
 
+import { partnerVerification } from './documents.service';
 import { PrismaService } from '../../database/prisma.service';
 import { SettingsService } from '../settings/settings.service';
 import { UpdatePartnerStatusDto } from './dto/update-partner-status.dto';
@@ -134,6 +135,28 @@ export class LogisticsService {
     private readonly events: EventEmitter2,
     @Optional() private readonly settings?: SettingsService,
   ) {}
+
+  /**
+   * When the partnerDocumentsRequired setting is on, a partner whose required
+   * documents aren't all approved and unexpired can't go online or take a
+   * delivery. 403 (never 401, which the app treats as signed out) with the
+   * missing document types so the app can point them to the right upload.
+   */
+  private async assertDocumentsApproved(profile: { id: string; type: string }) {
+    if (!(await this.settings?.get('partnerDocumentsRequired'))) return;
+    const docs = await this.prisma.partnerDocument.findMany({
+      where: { partnerId: profile.id, status: 'APPROVED' },
+      select: { type: true, status: true, expiresAt: true },
+    });
+    const v = partnerVerification(profile.type, docs);
+    if (v.status !== 'VERIFIED') {
+      throw new ForbiddenException({
+        message: 'Your documents need to be approved before you can take deliveries. Check Documents in the app.',
+        code: 'DOCUMENTS_REQUIRED',
+        missing: v.missing,
+      });
+    }
+  }
 
   // The partner's own profile. The full payout number never leaves the server;
   // only a masked copy is shown (the wallet endpoints manage the real one).
@@ -407,6 +430,8 @@ export class LogisticsService {
         'You are not registered as a delivery partner',
       );
     }
+
+    if (profile && role !== StaffRole.ADMIN) await this.assertDocumentsApproved(profile);
 
     // 409 so the app can tell "someone else got it" apart from other errors.
     if (
@@ -930,6 +955,10 @@ export class LogisticsService {
         'You are not registered as a delivery partner',
       );
     }
+
+    // Going offline is always allowed; going online needs approved papers
+    // when the partnerDocumentsRequired setting is on.
+    if (dto.isAvailable === true) await this.assertDocumentsApproved(profile);
 
     const updated = await this.prisma.deliveryPartnerProfile.update({
       where: {

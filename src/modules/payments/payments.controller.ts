@@ -10,7 +10,9 @@ import {
   Req,
   Res,
   UseGuards,
+  UseInterceptors,
 } from '@nestjs/common';
+import { IdempotencyInterceptor } from '../../shared/interceptors/idempotency.interceptor';
 import { SkipThrottle, Throttle } from '@nestjs/throttler';
 import type { Request, Response } from 'express';
 import { PaymentsService } from './payments.service';
@@ -55,10 +57,13 @@ export class PaymentsController {
     return this.paymentsService.markCashCollected(id, user.userId);
   }
 
-  // Admin: full refund. Online payments go back through the provider.
+  // Admin: full refund. Online payments go back through the provider. A
+  // retry with the same Idempotency-Key replays the first answer (the
+  // conditional status flip in the service already stops a second refund).
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(StaffRole.ADMIN)
   @Post(':id/refund')
+  @UseInterceptors(IdempotencyInterceptor)
   refund(@CurrentUser() user: { userId: string }, @Param('id') id: string, @Body() dto: RefundPaymentDto) {
     return this.paymentsService.refund(id, user.userId, dto.reason);
   }

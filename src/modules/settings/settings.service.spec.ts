@@ -26,7 +26,22 @@ describe('SettingsService', () => {
       maintenanceMode: false,
       maintenanceMessage: expect.any(String),
       whatsappContactNumber: '',
+      partnerDocumentsRequired: false,
     });
+  });
+
+  it('accepts everyday 2-decimal fees that floating point gets slightly wrong (4.35, 8.20, 0.29)', async () => {
+    for (const fee of [4.35, 8.2, 0.29, 1.15, 9.95]) {
+      const { svc } = setup([{ key: 'laundryPickupFee', value: fee }]);
+      expect((await svc.getAll()).laundryPickupFee).toBe(fee);
+    }
+    const { svc } = setup([{ key: 'laundryPickupFee', value: 1.234 }]);
+    expect((await svc.getAll()).laundryPickupFee).toBe(5); // 3 decimals: ignored, default used
+  });
+
+  it('partnerDocumentsRequired is a stored true/false switch', async () => {
+    expect((await setup([{ key: 'partnerDocumentsRequired', value: true }]).svc.getAll()).partnerDocumentsRequired).toBe(true);
+    expect((await setup([{ key: 'partnerDocumentsRequired', value: 'yes' }]).svc.getAll()).partnerDocumentsRequired).toBe(false);
   });
 
   it('stored values win; invalid or unknown stored rows are ignored', async () => {

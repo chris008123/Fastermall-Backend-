@@ -106,6 +106,13 @@ export class AdminPreOrdersController {
     return this.preorders.adminSetStatus(id, dto);
   }
 
+  // Every design of a product, switched-off ones included (the public product
+  // only lists active designs, so admins couldn't switch one back on).
+  @Get('marketplace/products/:id/variants')
+  listVariants(@Param('id') id: string) {
+    return this.preorders.listVariants(id);
+  }
+
   @Post('marketplace/products/:id/variants')
   createVariant(@Param('id') id: string, @Body() dto: CreateVariantDto) {
     return this.preorders.createVariant(id, dto);
