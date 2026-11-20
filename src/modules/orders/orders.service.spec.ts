@@ -93,6 +93,41 @@ describe('OrdersService.findMyOrders', () => {
     expect(JSON.stringify(out)).not.toMatch(/deliveryCodeHash|deliveryCodeEncrypted/);
     expect(out[1].delivery).toBeNull();
   });
+
+  it('returns every order, newest first, when no options are given', async () => {
+    const { svc, prisma } = setup([]);
+    prisma.order.findMany = jest.fn().mockResolvedValue([]);
+
+    await svc.findMyOrders('u1');
+
+    const args = prisma.order.findMany.mock.calls[0][0];
+    expect(args.where).toEqual({ customerId: 'u1' });
+    expect(args.take).toBeUndefined();
+    expect(args.orderBy).toEqual({ createdAt: 'desc' });
+  });
+
+  it('limits to the newest N of one type when asked', async () => {
+    const { svc, prisma } = setup([]);
+    prisma.order.findMany = jest.fn().mockResolvedValue([]);
+
+    await svc.findMyOrders('u1', { take: 13, type: 'FOOD' as any });
+
+    const args = prisma.order.findMany.mock.calls[0][0];
+    expect(args.where).toEqual({ customerId: 'u1', type: 'FOOD' });
+    expect(args.take).toBe(13);
+  });
+});
+
+describe('OrdersService.countMyOrders', () => {
+  it('adds marketplace/food and laundry orders for the customer', async () => {
+    const { svc, prisma } = setup([]);
+    prisma.order.count = jest.fn().mockResolvedValue(7);
+    prisma.laundryOrder = { count: jest.fn().mockResolvedValue(3) };
+
+    await expect(svc.countMyOrders('u1')).resolves.toEqual({ count: 10 });
+    expect(prisma.order.count).toHaveBeenCalledWith({ where: { customerId: 'u1' } });
+    expect(prisma.laundryOrder.count).toHaveBeenCalledWith({ where: { customerId: 'u1' } });
+  });
 });
 
 describe('OrdersService.findOne delivery code', () => {

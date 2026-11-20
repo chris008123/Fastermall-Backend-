@@ -482,9 +482,21 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
     return orderWithDelivery ? withDeliveryWindow(orderWithDelivery) : orderWithDelivery;
   }
 
-  async findMyOrders(customerId: string) {
+  // How many orders the customer has placed, laundry included (the profile's
+  // order count), so the app needn't download every order to show it.
+  async countMyOrders(customerId: string) {
+    const [orders, laundry] = await Promise.all([
+      this.prisma.order.count({ where: { customerId } }),
+      this.prisma.laundryOrder.count({ where: { customerId } }),
+    ]);
+    return { count: orders + laundry };
+  }
+
+  // Newest first. `take` and `type` narrow it; without them every order is returned.
+  async findMyOrders(customerId: string, opts: { take?: number; type?: OrderType } = {}) {
     const orders = await this.prisma.order.findMany({
-      where: { customerId },
+      where: { customerId, ...(opts.type ? { type: opts.type } : {}) },
+      ...(opts.take ? { take: opts.take } : {}),
       include: {
         items: {
           include: {

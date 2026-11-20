@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Headers, Param, Patch, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Headers, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
 import { parseIdempotencyKey } from '../../shared/utils/idempotency';
 import { OrdersService } from './orders.service';
 import { CreateOrderDto } from './dto/create-order.dto';
@@ -9,7 +9,8 @@ import { JwtAuthGuard } from '../../shared/guards/jwt-auth.guard';
 import { RolesGuard } from '../../shared/guards/roles.guard';
 import { Roles } from '../../shared/decorators/roles.decorator';
 import { CurrentUser } from '../../shared/decorators/current-user.decorator';
-import { StaffRole } from '@prisma/client';
+import { OrderType, StaffRole } from '@prisma/client';
+import { MyOrdersQueryDto } from '../../shared/dto/my-orders-query.dto';
 
 @UseGuards(JwtAuthGuard)
 @Controller('orders')
@@ -32,8 +33,18 @@ export class OrdersController {
 
   @UseGuards(CustomerGuard)
   @Get()
-  findMine(@CurrentUser() user: { userId: string }) {
-    return this.ordersService.findMyOrders(user.userId);
+  findMine(@CurrentUser() user: { userId: string }, @Query() query: MyOrdersQueryDto) {
+    return this.ordersService.findMyOrders(user.userId, {
+      take: query.take,
+      type: query.type ? OrderType[query.type] : undefined,
+    });
+  }
+
+  // Declared before :id so "count" isn't read as an order id.
+  @UseGuards(CustomerGuard)
+  @Get('count')
+  count(@CurrentUser() user: { userId: string }) {
+    return this.ordersService.countMyOrders(user.userId);
   }
 
   // The order's delivery window and the windows it may be moved to.
