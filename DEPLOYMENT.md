@@ -78,7 +78,8 @@ Production API: `https://fastermall-super-app-backend.onrender.com/api/v1`
 | `PARTNER_AUTO_OFFLINE` / `PARTNER_OFFLINE_AFTER_SECONDS` | `false` / `180` | Leave off: live location was removed |
 | `DOCUMENTS_BUCKET` / `DOCUMENT_MAX_BYTES` | `partner-documents` / 5 MB | Private bucket |
 | ★ `PRODUCT_IMAGES_BUCKET` / `PRODUCT_IMAGE_MAX_BYTES` / `PRODUCT_IMAGES_MAX` | `product-images` / 5 MB / `5` | Public bucket. Uploads are converted to WebP (max 1600 px) with a 400 px thumbnail; the size limit applies to the file the admin uploads |
-| ★ `PROMOTION_IMAGES_BUCKET` | `promotion-images` | Public bucket |
+| ★ `PROMOTION_IMAGES_BUCKET` | `promotion-images` | Public bucket (popup images and Lottie animations) |
+| `PROMOTION_LOTTIE_MAX_BYTES` | `524288` | Largest Lottie file for a promotion (default 512 KB) |
 | ★ `PREORDER_IMAGES_BUCKET` / `PREORDER_IMAGES_MAX` | `preorder-references` / `5` | Private bucket |
 | `APP_MIN_VERSION_PARTNER`, `APP_MIN_VERSION_CUSTOMER`, `APP_UPDATE_URL_PARTNER`, `APP_UPDATE_URL_CUSTOMER` | | Force-update prompt in the apps (see section 7) |
 | `MAINTENANCE_MODE`, `MAINTENANCE_MESSAGE`, `SUPPORT_PHONE`, `SUPPORT_EMAIL` | | Served at `GET /app/config` |
@@ -169,7 +170,7 @@ The new features are empty until someone fills them in:
 1. **Settings → Platform settings → Support and WhatsApp number.** Until set, the apps hide *Call us*, *WhatsApp*, and the partner safety call.
 2. **Settings → fees.** Check the marketplace delivery fee and laundry pickup fee; the apps now show the server's values.
 3. **FAQ**: review the seeded answers.
-4. **Promotions**: add any live promotion (with theme/animation); it pops up on app launch.
+4. **Promotions**: add any live promotion (with theme/animation); it pops up on app launch. Optionally upload a Lottie JSON animation, and check it with the preview before it goes live.
 5. **Products**: add photos (up to 5 each); mark made-to-order products as pre-orderable and add designs.
 6. **Food**: add option groups / add-ons to dishes (add *required* groups only after the new customer app is out, or old versions can't order those dishes).
 7. **Laundry vendors**: add and approve vendors with their own price lists.

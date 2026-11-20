@@ -14,6 +14,8 @@ export default () => ({
   promotionImages: {
     // PUBLIC Supabase bucket, created automatically on first upload.
     bucket: process.env.PROMOTION_IMAGES_BUCKET || 'promotion-images',
+    // Largest Lottie animation file an admin can upload for a promotion.
+    lottieMaxBytes: parseInt(process.env.PROMOTION_LOTTIE_MAX_BYTES || String(512 * 1024), 10),
   },
   preOrders: {
     // PRIVATE Supabase bucket for customers' reference photos, created on first upload.

@@ -9,38 +9,38 @@ datasource db {
 }
 
 model User {
-  id             String          @id @default(uuid())
-  email          String?         @unique
-  phone          String?         @unique
-  passwordHash   String?
-  googleId       String?         @unique
-  fullName       String
-  isVerified     Boolean         @default(false)
-  createdAt      DateTime        @default(now())
-  updatedAt      DateTime        @updatedAt
-  otpCodeHash    String?
-  otpExpiresAt   DateTime?
-  otpAttempts    Int             @default(0)
-  resetCodeHash  String?
-  resetExpiresAt DateTime?
-  resetAttempts  Int             @default(0)
+  id               String                @id @default(uuid())
+  email            String?               @unique
+  phone            String?               @unique
+  passwordHash     String?
+  googleId         String?               @unique
+  fullName         String
+  isVerified       Boolean               @default(false)
+  createdAt        DateTime              @default(now())
+  updatedAt        DateTime              @updatedAt
+  otpCodeHash      String?
+  otpExpiresAt     DateTime?
+  otpAttempts      Int                   @default(0)
+  resetCodeHash    String?
+  resetExpiresAt   DateTime?
+  resetAttempts    Int                   @default(0)
   // Per-account lockout after repeated wrong passwords or codes.
-  loginFailures  Int             @default(0)
+  loginFailures    Int                   @default(0)
   loginLockedUntil DateTime?
-  codeFailures   Int             @default(0)
-  codeLockedUntil DateTime?
-  laundryOrders  LaundryOrder[]
-  notifications  Notification[]
-  devices        Device[]
-  orders         Order[]
-  supportTickets SupportTicket[]
+  codeFailures     Int                   @default(0)
+  codeLockedUntil  DateTime?
+  laundryOrders    LaundryOrder[]
+  notifications    Notification[]
+  devices          Device[]
+  orders           Order[]
+  supportTickets   SupportTicket[]
   // Set when the customer deletes their account. The row is kept (orders
   // reference it) but every personal field is cleared.
-  deletedAt      DateTime?
-  reviews        ProductReview[]
-  addresses      Address[]
-  preOrders      PreOrderRequest[]
-  laundryReviews LaundryVendorReview[]
+  deletedAt        DateTime?
+  reviews          ProductReview[]
+  addresses        Address[]
+  preOrders        PreOrderRequest[]
+  laundryReviews   LaundryVendorReview[]
 
   @@map("users")
 }
@@ -118,31 +118,31 @@ model StaffSession {
 }
 
 model DeliveryPartnerProfile {
-  id           String              @id @default(uuid())
-  staffUserId  String              @unique
-  type         DeliveryPartnerType
-  isAvailable  Boolean             @default(false)
-  currentLat   Float?
-  currentLng   Float?
+  id                String              @id @default(uuid())
+  staffUserId       String              @unique
+  type              DeliveryPartnerType
+  isAvailable       Boolean             @default(false)
+  currentLat        Float?
+  currentLng        Float?
   // Only the latest position is kept (no trail), and it is cleared when the
   // partner goes offline. See PresenceService.
   locationAt        DateTime?
   locationAccuracyM Float?
   lastSeenAt        DateTime?
-  vehiclePlate String?
+  vehiclePlate      String?
   // Where cash-outs are sent (mobile money). Only the masked number is ever
   // returned by the API.
-  payoutNetwork String?
-  payoutNumber  String?
+  payoutNetwork     String?
+  payoutNumber      String?
   // Saved app settings (notifications, delivery, navigation). See PreferencesService.
-  preferences   Json?
-  documents     PartnerDocument[]
-  createdAt    DateTime            @default(now())
-  payoutRequests PayoutRequest[]
-  deliveries   Delivery[]
-  staffUser    StaffUser           @relation(fields: [staffUserId], references: [id])
-  earnings     DriverEarning[]
-  payouts      PartnerPayout[]
+  preferences       Json?
+  documents         PartnerDocument[]
+  createdAt         DateTime            @default(now())
+  payoutRequests    PayoutRequest[]
+  deliveries        Delivery[]
+  staffUser         StaffUser           @relation(fields: [staffUserId], references: [id])
+  earnings          DriverEarning[]
+  payouts           PartnerPayout[]
 
   @@map("delivery_partner_profiles")
 }
@@ -167,36 +167,36 @@ model MarketplaceVendor {
 }
 
 model Product {
-  id          String             @id @default(uuid())
-  name        String
-  description String?
-  price       Decimal            @db.Decimal(10, 2)
-  stock       Int                @default(0)
-  categoryId  String?
-  createdAt   DateTime           @default(now())
-  updatedAt   DateTime           @updatedAt
-  imageUrl    String?
+  id               String             @id @default(uuid())
+  name             String
+  description      String?
+  price            Decimal            @db.Decimal(10, 2)
+  stock            Int                @default(0)
+  categoryId       String?
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
+  imageUrl         String?
   // The first photo's 400 px thumbnail, for product cards (null when the
   // first photo has none, e.g. it was uploaded before Nov 2026).
-  thumbnailUrl String?
-  unit        String?
-  vendorId    String?
-  orderItems  OrderItem[]
-  category    Category?          @relation(fields: [categoryId], references: [id])
-  vendor      MarketplaceVendor? @relation(fields: [vendorId], references: [id])
+  thumbnailUrl     String?
+  unit             String?
+  vendorId         String?
+  orderItems       OrderItem[]
+  category         Category?          @relation(fields: [categoryId], references: [id])
+  vendor           MarketplaceVendor? @relation(fields: [vendorId], references: [id])
   // Average of the product's reviews (1-5), null until the first review.
   // Kept up to date when a review is written or removed, so listings can
   // sort and filter on it.
-  rating      Float?
-  reviewCount Int                @default(0)
-  reviews     ProductReview[]
+  rating           Float?
+  reviewCount      Int                @default(0)
+  reviews          ProductReview[]
   // Photos in display order. imageUrl above is always the first one (or
   // null), so apps that only read imageUrl keep working.
-  images      ProductImage[]
+  images           ProductImage[]
   // Designs / variations the customer can pick when pre-ordering.
-  variants    ProductVariant[]
+  variants         ProductVariant[]
   // Customers may request this product made to order (see PreOrderRequest).
-  allowsPreOrder   Boolean @default(false)
+  allowsPreOrder   Boolean            @default(false)
   // Usual days from accepting a quote to delivery, shown in the app.
   preOrderLeadDays Int?
   preOrders        PreOrderRequest[]
@@ -239,17 +239,17 @@ model FoodVendor {
 }
 
 model MenuItem {
-  id          String      @id @default(uuid())
-  vendorId    String
-  name        String
-  price       Decimal     @db.Decimal(10, 2)
-  isAvailable Boolean     @default(true)
-  category    String?
-  description String?
-  imageUrl    String?
-  rating      Float       @default(0)
-  vendor      FoodVendor  @relation(fields: [vendorId], references: [id])
-  orderItems  OrderItem[]
+  id           String                @id @default(uuid())
+  vendorId     String
+  name         String
+  price        Decimal               @db.Decimal(10, 2)
+  isAvailable  Boolean               @default(true)
+  category     String?
+  description  String?
+  imageUrl     String?
+  rating       Float                 @default(0)
+  vendor       FoodVendor            @relation(fields: [vendorId], references: [id])
+  orderItems   OrderItem[]
   // Choices the customer makes (e.g. beans portion, plantain, extras).
   optionGroups MenuItemOptionGroup[]
 
@@ -257,25 +257,25 @@ model MenuItem {
 }
 
 model Order {
-  id             String      @id @default(uuid())
-  customerId     String
-  type           OrderType
-  status         OrderStatus @default(PENDING)
-  totalAmount    Decimal     @db.Decimal(10, 2)
-  createdAt      DateTime    @default(now())
-  updatedAt      DateTime    @updatedAt
-  addressLabel   String?
-  deliveryFee    Decimal     @default(0) @db.Decimal(10, 2)
-  notes          String?
-  paymentMethod  String?
-  vendorName     String?
-  delivery       Delivery?
-  items          OrderItem[]
-  customer       User        @relation(fields: [customerId], references: [id])
-  payment        Payment?
+  id                  String      @id @default(uuid())
+  customerId          String
+  type                OrderType
+  status              OrderStatus @default(PENDING)
+  totalAmount         Decimal     @db.Decimal(10, 2)
+  createdAt           DateTime    @default(now())
+  updatedAt           DateTime    @updatedAt
+  addressLabel        String?
+  deliveryFee         Decimal     @default(0) @db.Decimal(10, 2)
+  notes               String?
+  paymentMethod       String?
+  vendorName          String?
+  delivery            Delivery?
+  items               OrderItem[]
+  customer            User        @relation(fields: [customerId], references: [id])
+  payment             Payment?
   // Sent by the app as the Idempotency-Key header so a retried request
   // returns the first order instead of creating a second one.
-  idempotencyKey String?
+  idempotencyKey      String?
   // Marketplace delivery window (see src/shared/utils/delivery-windows.ts).
   // Assigned from the order time; the customer may move it to one of the two
   // windows after the original one. Null for food orders and for orders
@@ -284,7 +284,7 @@ model Order {
   deliveryWindowEnd   DateTime?
   originalWindowStart DateTime?
   rescheduledAt       DateTime?
-  rescheduleCount     Int       @default(0)
+  rescheduleCount     Int         @default(0)
 
   @@unique([customerId, idempotencyKey])
   @@index([deliveryWindowStart])
@@ -292,15 +292,15 @@ model Order {
 }
 
 model OrderItem {
-  id         String    @id @default(uuid())
-  orderId    String
-  productId  String?
-  menuItemId String?
-  quantity   Int
-  unitPrice  Decimal   @db.Decimal(10, 2)
-  menuItem   MenuItem? @relation(fields: [menuItemId], references: [id])
-  order      Order     @relation(fields: [orderId], references: [id])
-  product    Product?  @relation(fields: [productId], references: [id])
+  id              String    @id @default(uuid())
+  orderId         String
+  productId       String?
+  menuItemId      String?
+  quantity        Int
+  unitPrice       Decimal   @db.Decimal(10, 2)
+  menuItem        MenuItem? @relation(fields: [menuItemId], references: [id])
+  order           Order     @relation(fields: [orderId], references: [id])
+  product         Product?  @relation(fields: [productId], references: [id])
   // What the customer chose for a customisable food item, copied at order
   // time: [{ groupId, groupName, optionId, name, price, quantity }]. The
   // unitPrice above already includes these. Null for plain items.
@@ -349,8 +349,8 @@ model LaundryOrder {
   payment  Payment?
   delivery Delivery?
 
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
   // Hostel / room / landmark the rider collects the bag from.
   addressLabel   String?
   idempotencyKey String?
@@ -411,7 +411,7 @@ model Delivery {
   riderLng                Float?
   riderLocationAt         DateTime?
 
-  supportTickets          SupportTicket[]
+  supportTickets SupportTicket[]
 
   @@index([claimedByStaffId])
   @@map("deliveries")
@@ -877,32 +877,44 @@ enum PromotionFrequency {
 // A promotion shown as a popup when the app opens (requirement 2.1). Live
 // while isActive and now is between startsAt and endsAt (open-ended if null).
 model Promotion {
-  id          String             @id @default(uuid())
-  title       String
-  subtitle    String?
-  body        String?
-  imageUrl    String?
+  id           String             @id @default(uuid())
+  title        String
+  subtitle     String?
+  body         String?
+  imageUrl     String?
   // Path in the promotion-images bucket when the image was uploaded here.
-  imagePath   String?
+  imagePath    String?
   // What the button opens.
-  ctaLabel    String?
-  ctaType     PromotionCtaType   @default(NONE)
-  ctaValue    String?
-  // Colours and animation preset for the popup, e.g.
-  // { "background": "#0B1D51", "accent": "#FFC83D", "animation": "float3d" }.
-  theme       Json?
-  startsAt    DateTime
-  endsAt      DateTime?
-  isActive    Boolean            @default(true)
+  ctaLabel     String?
+  ctaType      PromotionCtaType   @default(NONE)
+  ctaValue     String?
+  // Colours and animation for the popup, e.g.
+  // { "background": "#0B1D51", "accentColor": "#FFC83D", "animation": "float3d",
+  //   "entrance": { "preset": "slide", "direction": "up" }, "effect": { "preset": "confetti" } }.
+  // Presets: src/modules/promotions/animations.ts (GET /promotions/animations).
+  theme        Json?
+  // Uploaded Lottie animation (POST /admin/promotions/:id/animation): public
+  // URL, path in the promotion-images bucket, and
+  // { width, height, frameRate, durationMs, bytes }.
+  lottieUrl    String?
+  lottiePath   String?
+  lottieInfo   Json?
+  // Counted from the app (POST /promotions/:id/events) while it is live.
+  viewCount    Int                @default(0)
+  clickCount   Int                @default(0)
+  dismissCount Int                @default(0)
+  startsAt     DateTime
+  endsAt       DateTime?
+  isActive     Boolean            @default(true)
   // Higher shows first when several are live.
-  priority    Int                @default(0)
+  priority     Int                @default(0)
   // How often the app shows the popup to the same person.
-  frequency   PromotionFrequency @default(ONCE)
+  frequency    PromotionFrequency @default(ONCE)
   // When it was last pushed to customers (POST /admin/promotions/:id/announce).
-  announcedAt DateTime?
-  createdById String?
-  createdAt   DateTime           @default(now())
-  updatedAt   DateTime           @updatedAt
+  announcedAt  DateTime?
+  createdById  String?
+  createdAt    DateTime           @default(now())
+  updatedAt    DateTime           @updatedAt
 
   @@index([isActive, startsAt, endsAt])
   @@map("promotions")

@@ -503,7 +503,7 @@ Customer app:
 - On launch, call `GET /promotions/active` (no login). It returns live promotions, highest `priority` first, at most 10. Show the first as the popup (the rest can be a carousel). Each has:
   - **Text and image:** `id`, `title`, `subtitle`, `body`, `imageUrl`.
   - **Button:** `ctaLabel`, `ctaType`, `ctaValue`. See the button table below.
-  - **Look:** `theme`, e.g. `{ background, textColor, accentColor, animation }`, where `animation` is one of `none`, `fade`, `slide`, `bounce`, `confetti`, `float3d`. This is where the 3D and animated presentation is styled.
+  - **Look:** `theme`, e.g. `{ background, textColor, accentColor, animation }`, where `animation` is one of `none`, `fade`, `slide`, `bounce`, `confetti`, `float3d`. This is where the 3D and animated presentation is styled. **Since 20 Nov 2026** there are more presets, separate entrance/effect/loop parts, Lottie files and counters: see *Promotion animations and Lottie* below.
   - **Schedule:** `startsAt`, `endsAt`.
   - **Popup frequency:** `ONCE`, `DAILY` or `EVERY_OPEN`. The app tracks which ids it has shown; also use `updatedAt` to show an edited promotion again.
 - Button: open the product / category / vendor / food vendor with id `ctaValue`, or the https link for `URL`. `NONE` means no button.
@@ -722,3 +722,71 @@ Delivery (partner) app:
   - The answer is **403** `DOCUMENTS_REQUIRED` with `missing: [DocumentType…]`; show it and point to the Documents screen.
   - Going offline is always allowed.
   - Off by default: turn it on in the console once partners have uploaded their papers.
+
+## Promotion animations and Lottie (20 Nov 2026)
+
+Needs migration `20261120120000_promotion_lottie_and_stats` (new columns on `promotions` only, nullable or with a default). Lottie files go to the existing `promotion-images` bucket. `PROMOTION_LOTTIE_MAX_BYTES` (default 512 KB) caps their size.
+
+Apps already released keep working without changes: `theme.animation` is always one of the six original presets.
+
+### Customer app
+
+**1. Read the preset list from the backend.** `GET /promotions/animations` (no login, cached 5 minutes) returns:
+- `presets`: `[{ key, label, kind, fallback, heavy, legacy, since }]`.
+  - `kind` is `entrance` (how the popup appears), `effect` (played over it) or `loop` (continuous motion while it is open).
+  - Presets: entrance `fade`, `slide`, `bounce`, `zoom`; effect `confetti`, `snow`, `sparkle`; loop `float3d`, `pulse`, `shine`. `none` means no animation.
+- `limits`, `slideDirections`, `loopIntensities`, `lottiePlacements`.
+- `rules`: the rules below, in words.
+
+Stop hard-coding the preset names.
+
+**2. Theme.** `theme` on `GET /promotions/active` can now have:
+```json
+{
+  "background": "#0B1D51", "textColor": "#FFFFFF", "accentColor": "#FFC83D",
+  "animation": "confetti",
+  "entrance": { "preset": "slide", "direction": "up", "durationMs": 400, "delayMs": 0 },
+  "effect":   { "preset": "snow", "colors": ["#FFFFFF"], "durationMs": 3000 },
+  "loop":     { "preset": "pulse", "intensity": "low" },
+  "lottie":   { "loop": true, "speed": 1, "placement": "hero" }
+}
+```
+Every part is optional. Play the entrance, then the effect, with the loop running while the popup is open. `animation` is only for apps that don't read the new parts.
+
+**3. Lottie.** A promotion can have `lottieUrl` (a Lottie JSON file) and `lottieInfo: { width, height, frameRate, durationMs, bytes }`.
+- Play it with `lottie-react-native` (React Native) or `lottie-web`, using `theme.lottie`:
+  - `placement`: `hero` replaces the image, `background` goes behind the text, `overlay` goes over everything (default `hero`);
+  - `loop`: default `false`;
+  - `speed`: 0.25–3, default 1.
+- Use `width`/`height` to reserve the space before the file loads.
+- If it fails to load, fall back to the presets.
+
+**4. Rules the app must follow.**
+- **Unknown preset** (the app is older than it): play its `fallback`, following the chain. If it has none, or the name isn't in the catalogue at all, play `fade`. Never crash on an unknown name.
+- **Reduce motion on:** entrance `fade`, no effect, no loop, and only the first frame of the Lottie.
+- **Low-end phone:** skip presets with `heavy: true` and Lottie `overlay`.
+
+**5. Counting.** `POST /promotions/:id/events` with `{ "type": "VIEW" | "CLICK" | "DISMISS" }`. No login needed.
+- Send `VIEW` when the popup is shown, `CLICK` when its button is tapped, and `DISMISS` when it is closed without tapping.
+- The answer is `{ recorded: true|false }`; it is `false` for an ended or unknown promotion, never an error. Don't retry it.
+- Limited to 30 a minute per phone.
+
+### Admin console
+
+- **Theme form:** build the preset dropdowns from `GET /promotions/animations` (filter by `kind`), with the ranges from `limits`. `theme.accent` is not a field; use `accentColor` (the old schema comment was wrong). Leave `animation` empty and the server fills it from the new parts for older apps. Unknown keys and out-of-range values return 400.
+- **Lottie:**
+  - `POST /admin/promotions/:id/animation`: multipart, the Lottie **JSON** file in the field `animation`. Replaces the old one.
+  - `DELETE /admin/promotions/:id/animation` removes it.
+  - The file is checked and stored minified. 400 codes:
+    - `NO_ANIMATION_FILE`;
+    - `INVALID_LOTTIE`: not Lottie JSON;
+    - `LOTTIE_ZIP_NOT_SUPPORTED`: a `.lottie` file; export as JSON instead;
+    - `LOTTIE_TOO_LARGE`: over 4096 px;
+    - `LOTTIE_TOO_LONG`: over 30 s;
+    - `LOTTIE_TOO_COMPLEX`;
+    - `LOTTIE_EXTERNAL_ASSETS`: images must be embedded PNG/JPEG/WebP;
+    - `LOTTIE_EXPRESSIONS`: After Effects expressions are not allowed; bake them into keyframes.
+  - 413 `LOTTIE_FILE_TOO_LARGE` when the file is over the size limit.
+- **Preview:** `GET /admin/promotions/:id/preview` returns `{ status, promotion }`, where `promotion` is exactly what the app will get, even while it is scheduled or inactive. Render it with the same component as the app.
+- **Results:** admin promotion rows now include `viewCount`, `clickCount`, `dismissCount` and `clickRate` (clicks per view, 0–1, `null` before any view). Only events sent while the promotion is live are counted. The counts aren't tied to logins, so treat them as a guide rather than exact figures.
+- Deleting a promotion also deletes its Lottie file.

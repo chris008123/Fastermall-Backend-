@@ -7,13 +7,48 @@ import { StorageService } from '../../shared/storage/storage.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { sniffImageType, UploadedImage } from '../marketplace/product-images.service';
 import { toMainWebp } from '../../shared/images/image-processing';
-import { CreatePromotionDto, PromotionStatus, UpdatePromotionDto } from './dto/promotion.dto';
+import {
+  CreatePromotionDto,
+  PromotionEventType,
+  PromotionStatus,
+  PromotionThemeDto,
+  UpdatePromotionDto,
+} from './dto/promotion.dto';
+import { legacyAnimation } from './animations';
+import { checkLottie } from './lottie';
 
 // Live promotions the app gets at most (the popup shows the first; the rest
 // can be a carousel).
 const ACTIVE_LIMIT = 10;
 // Re-announcing the same promotion is refused for this long (no push spam).
 const ANNOUNCE_COOLDOWN_MS = 12 * 60 * 60 * 1000;
+// Largest Lottie file accepted (PROMOTION_LOTTIE_MAX_BYTES).
+const DEFAULT_LOTTIE_MAX_BYTES = 512 * 1024;
+
+const EVENT_COUNTER: Record<PromotionEventType, 'viewCount' | 'clickCount' | 'dismissCount'> = {
+  VIEW: 'viewCount',
+  CLICK: 'clickCount',
+  DISMISS: 'dismissCount',
+};
+
+/**
+ * The theme as stored: what the admin sent, with `animation` filled in for
+ * apps released before Nov 2026 (they read nothing else).
+ */
+export function normalizeTheme(theme: PromotionThemeDto | null | undefined): Prisma.InputJsonValue | typeof Prisma.JsonNull {
+  if (!theme) return Prisma.JsonNull;
+  // Plain object (the DTO is a class instance) without undefined keys.
+  const plain = JSON.parse(JSON.stringify(theme));
+  const animation = legacyAnimation(plain);
+  if (animation) plain.animation = animation;
+  return plain;
+}
+
+/** Admin rows: counters plus the click rate (clicks per view, 0-1, null with no views). */
+function withStats<T extends { viewCount?: number; clickCount?: number }>(p: T) {
+  const views = p.viewCount ?? 0;
+  return { ...p, clickRate: views > 0 ? Math.round(((p.clickCount ?? 0) / views) * 1000) / 1000 : null };
+}
 
 const PUBLIC_SELECT = {
   id: true,
@@ -25,6 +60,8 @@ const PUBLIC_SELECT = {
   ctaType: true,
   ctaValue: true,
   theme: true,
+  lottieUrl: true,
+  lottieInfo: true,
   startsAt: true,
   endsAt: true,
   priority: true,
@@ -73,6 +110,9 @@ export class PromotionsService {
   private get maxBytes() {
     return this.config.get<number>('productImages.maxBytes') ?? 5 * 1024 * 1024;
   }
+  private get lottieMaxBytes() {
+    return this.config.get<number>('promotionImages.lottieMaxBytes') ?? DEFAULT_LOTTIE_MAX_BYTES;
+  }
 
   // ───────── App ─────────
 
@@ -84,6 +124,20 @@ export class PromotionsService {
       take: ACTIVE_LIMIT,
       select: PUBLIC_SELECT,
     });
+  }
+
+  /**
+   * Counts a view, button tap or dismissal sent by the app. Only live
+   * promotions count (an admin preview or a stale popup is ignored), and an
+   * unknown id is ignored too, so the app never has to handle an error here.
+   */
+  async recordEvent(id: string, type: PromotionEventType) {
+    const counter = EVENT_COUNTER[type];
+    const result = await this.prisma.promotion.updateMany({
+      where: { id, ...liveAt(this.now()) },
+      data: { [counter]: { increment: 1 } },
+    });
+    return { recorded: result.count === 1 };
   }
 
   // ───────── Admin ─────────
@@ -105,13 +159,24 @@ export class PromotionsService {
       orderBy: [{ startsAt: 'desc' }, { id: 'asc' }],
       take: 200,
     });
-    return rows.map((p) => ({ ...p, status: promotionStatus(p, now) }));
+    return rows.map((p) => withStats({ ...p, status: promotionStatus(p, now) }));
   }
 
   async findOne(id: string) {
     const p = await this.prisma.promotion.findUnique({ where: { id } });
     if (!p) throw new NotFoundException('Promotion not found');
-    return { ...p, status: promotionStatus(p, this.now()) };
+    return withStats({ ...p, status: promotionStatus(p, this.now()) });
+  }
+
+  /**
+   * Exactly what the app will get for this promotion, whatever its status,
+   * so the console can show the popup before it goes live.
+   */
+  async preview(id: string) {
+    const p = await this.prisma.promotion.findUnique({ where: { id }, select: { ...PUBLIC_SELECT, isActive: true } });
+    if (!p) throw new NotFoundException('Promotion not found');
+    const { isActive, ...promotion } = p;
+    return { status: promotionStatus({ isActive, startsAt: p.startsAt, endsAt: p.endsAt }, this.now()), promotion };
   }
 
   async create(dto: CreatePromotionDto, adminId: string) {
@@ -128,7 +193,7 @@ export class PromotionsService {
         body: dto.body || null,
         imageUrl: dto.imageUrl || null,
         ...cta,
-        theme: (dto.theme as Prisma.InputJsonValue) ?? Prisma.JsonNull,
+        theme: normalizeTheme(dto.theme),
         startsAt,
         endsAt,
         isActive: dto.isActive ?? true,
@@ -137,7 +202,7 @@ export class PromotionsService {
         createdById: adminId,
       },
     });
-    return { ...created, status: promotionStatus(created, this.now()) };
+    return withStats({ ...created, status: promotionStatus(created, this.now()) });
   }
 
   async update(id: string, dto: UpdatePromotionDto) {
@@ -153,7 +218,7 @@ export class PromotionsService {
       data.imageUrl = dto.imageUrl || null;
       data.imagePath = null; // a hand-set URL replaces an uploaded image
     }
-    if (dto.theme !== undefined) data.theme = (dto.theme as Prisma.InputJsonValue) ?? Prisma.JsonNull;
+    if (dto.theme !== undefined) data.theme = normalizeTheme(dto.theme);
     if (dto.isActive !== undefined) data.isActive = dto.isActive;
     if (dto.priority !== undefined) data.priority = dto.priority;
     if (dto.frequency !== undefined) data.frequency = dto.frequency;
@@ -182,15 +247,61 @@ export class PromotionsService {
     if (data.imagePath === null && current.imagePath) {
       await this.storage.removeFromBucket(this.bucket, [current.imagePath]);
     }
-    return { ...updated, status: promotionStatus(updated, this.now()) };
+    return withStats({ ...updated, status: promotionStatus(updated, this.now()) });
   }
 
   async remove(id: string) {
-    const current = await this.prisma.promotion.findUnique({ where: { id }, select: { imagePath: true } });
+    const current = await this.prisma.promotion.findUnique({ where: { id }, select: { imagePath: true, lottiePath: true } });
     if (!current) throw new NotFoundException('Promotion not found');
     await this.prisma.promotion.delete({ where: { id } });
-    if (current.imagePath) await this.storage.removeFromBucket(this.bucket, [current.imagePath]);
+    const files = [current.imagePath, current.lottiePath].filter((f): f is string => !!f);
+    if (files.length) await this.storage.removeFromBucket(this.bucket, files);
     return { deleted: true };
+  }
+
+  /**
+   * Uploads (or replaces) the promotion's Lottie animation. The file is
+   * checked (see lottie.ts) and stored minified in the promotion-images bucket.
+   */
+  async setLottie(id: string, file: UploadedImage | undefined) {
+    const current = await this.prisma.promotion.findUnique({ where: { id }, select: { lottiePath: true } });
+    if (!current) throw new NotFoundException('Promotion not found');
+    if (!file) {
+      throw new BadRequestException({ message: 'Attach the Lottie JSON file in the "animation" field', code: 'NO_ANIMATION_FILE' });
+    }
+    if (file.size > this.lottieMaxBytes || file.buffer.length > this.lottieMaxBytes) {
+      throw new PayloadTooLargeException({
+        message: `The animation file must be at most ${Math.round(this.lottieMaxBytes / 1024)} KB`,
+        code: 'LOTTIE_FILE_TOO_LARGE',
+      });
+    }
+    const { json, info } = checkLottie(file.buffer);
+
+    const path = `promotions/${id}/${randomUUID()}.json`;
+    const { publicUrl } = await this.storage.uploadPublic(this.bucket, path, json, 'application/json');
+    try {
+      const updated = await this.prisma.promotion.update({
+        where: { id },
+        data: { lottieUrl: publicUrl, lottiePath: path, lottieInfo: info as unknown as Prisma.InputJsonValue },
+      });
+      if (current.lottiePath) await this.storage.removeFromBucket(this.bucket, [current.lottiePath]);
+      return withStats({ ...updated, status: promotionStatus(updated, this.now()) });
+    } catch (error) {
+      await this.storage.removeFromBucket(this.bucket, [path]);
+      throw error;
+    }
+  }
+
+  /** Removes the Lottie animation; the popup goes back to the theme presets. */
+  async removeLottie(id: string) {
+    const current = await this.prisma.promotion.findUnique({ where: { id }, select: { lottiePath: true } });
+    if (!current) throw new NotFoundException('Promotion not found');
+    const updated = await this.prisma.promotion.update({
+      where: { id },
+      data: { lottieUrl: null, lottiePath: null, lottieInfo: Prisma.JsonNull },
+    });
+    if (current.lottiePath) await this.storage.removeFromBucket(this.bucket, [current.lottiePath]);
+    return withStats({ ...updated, status: promotionStatus(updated, this.now()) });
   }
 
   /** Uploads (or replaces) the popup image. JPEG, PNG or WebP in; stored as WebP, max 1600 px. */
@@ -212,7 +323,7 @@ export class PromotionsService {
     try {
       const updated = await this.prisma.promotion.update({ where: { id }, data: { imageUrl: publicUrl, imagePath: path } });
       if (current.imagePath) await this.storage.removeFromBucket(this.bucket, [current.imagePath]);
-      return { ...updated, status: promotionStatus(updated, this.now()) };
+      return withStats({ ...updated, status: promotionStatus(updated, this.now()) });
     } catch (error) {
       await this.storage.removeFromBucket(this.bucket, [path]);
       throw error;

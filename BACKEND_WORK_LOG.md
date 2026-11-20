@@ -97,6 +97,14 @@ Each feature is planned as its own branch, merged into `main`, following the exi
 - [x] `POST /admin/promotions/:id/announce` pushes to customers (`type: PROMOTION`), live promotions only, once per 12 h, safe against double clicks and retriable if the push fails.
 - [x] Verified: unit tests; migration with no drift; HTTP run of create, schedule, bad button, public list, announce (twice), the customer notification and deactivation.
 - [ ] Decided by default (requirement left it open): admins manage promotions. The 3D look and animation themselves are drawn by the app; the backend only stores the preset.
+- [x] 20 Nov 2026: animations from the backend.
+  - Preset catalogue `GET /promotions/animations` (`src/modules/promotions/animations.ts`), with kind, fallback, heavy flag and app rules.
+  - Theme split into `entrance` / `effect` / `loop` with settings, plus `lottie` play settings. `animation` is filled in by the server so older apps keep working.
+  - Lottie upload `POST/DELETE /admin/promotions/:id/animation`, checked in `lottie.ts`: Lottie JSON only, size, length, embedded images only, no expressions; stored minified.
+  - Admin preview `GET /admin/promotions/:id/preview`.
+  - View/click/dismiss counters `POST /promotions/:id/events` (public, 30/min), with `clickRate` in the admin rows.
+  - Fixed the schema comment (`accent` -> `accentColor`).
+  - Migration `20261120120000_promotion_lottie_and_stats` (new columns only).
 
 ### 2.12A Customizable food orders `[x]`
 - [x] `MenuItemOptionGroup` (min/max picks) and `MenuItemOption` (price, maxQuantity, isAvailable). `OrderItem.selectedOptions` snapshot. Migration `20261111000000_add_menu_item_options`.
@@ -187,3 +195,4 @@ After each step: `npm test`, `npm run build`, then update this log, `README.md` 
 | 13 Nov 2026 | Audit fixes | Refund claim before Paystack, admin alert and `needsRefund` list for failed refunds, `CustomerGuard` (403 for staff on customer routes), `ORDER_PAYMENT_TIMEOUT_MINUTES` read, `npm audit fix` + bcrypt 6 (16 -> 11 vulnerabilities, none critical). 732 tests pass. |
 | 13 Nov 2026 | Image conversion | Admin product and promotion uploads converted to WebP (max 1600 px, metadata removed) with 400 px product thumbnails. All 40 migrations verified on a throwaway Postgres (empty and with pre-multivendor laundry data): no drift, laundry data moved as intended. Server booted against it; upload, 403 and refund-list routes checked over HTTP. 743 tests pass. |
 | 17 Nov 2026 | Admin safeguards | Found by comparing the admin console with this backend. Order status moves forward only (no REFUNDED by hand, closed orders stay closed, conditional write). Idempotency-Key on admin payouts and refunds (existing interceptor). An admin's password or email can only be changed with the acting admin's own password. Optional `partnerDocumentsRequired` setting (off by default) gates going online and taking deliveries on approved documents. Admin list of all product designs. Fee check accepts 4.35 and similar. No migration. 790 tests pass. |
+| 20 Nov 2026 | Promotion animations | Lottie upload, preset catalogue, entrance/effect/loop theme, preview and counters (see 2.1). 848 tests pass; build clean. Migration SQL matches `prisma migrate diff` from the previous schema. Not run against a real database or Supabase (no local Postgres). |
