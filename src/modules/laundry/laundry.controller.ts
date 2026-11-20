@@ -9,6 +9,7 @@ import { RolesGuard } from '../../shared/guards/roles.guard';
 import { Roles } from '../../shared/decorators/roles.decorator';
 import { CurrentUser } from '../../shared/decorators/current-user.decorator';
 import { StaffRole } from '@prisma/client';
+import { MyOrdersQueryDto } from '../../shared/dto/my-orders-query.dto';
 
 @UseGuards(JwtAuthGuard)
 @Controller('laundry')
@@ -51,8 +52,8 @@ export class LaundryController {
 
   @UseGuards(CustomerGuard)
   @Get('orders')
-  findMine(@CurrentUser() user: { userId: string }) {
-    return this.laundryService.findMyOrders(user.userId);
+  findMine(@CurrentUser() user: { userId: string }, @Query() query: MyOrdersQueryDto) {
+    return this.laundryService.findMyOrders(user.userId, query.take);
   }
 
   @Get('orders/:id')

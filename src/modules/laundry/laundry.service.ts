@@ -198,9 +198,11 @@ export class LaundryService {
     });
   }
 
-  findMyOrders(customerId: string) {
+  // Newest first; `take` limits it to the newest N, otherwise every order.
+  findMyOrders(customerId: string, take?: number) {
     return this.prisma.laundryOrder.findMany({
       where: { customerId },
+      ...(take ? { take } : {}),
       include: { items: true, vendor: { select: { id: true, name: true, logoUrl: true } } },
       orderBy: { createdAt: 'desc' },
     });
